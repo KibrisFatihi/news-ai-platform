@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gündem Bülteni — Güncel Haber Özeti & Kaynak Dizini</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%23B91C1C'/><text x='50%25' y='55%25' dominant-baseline='middle' text-anchor='middle' fill='white' font-family='Georgia,serif' font-weight='bold' font-size='18'>G</text></svg>">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,500;0,6..72,600;0,6..72,700;1,6..72,400&display=swap" rel="stylesheet">
+  <style>
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background-color: #FAF8F5;
+      color: #18181B;
+      -webkit-font-smoothing: antialiased;
+    }
+    .font-editorial {
+      font-family: 'Newsreader', Georgia, serif;
+    }
+    .no-scrollbar::-webkit-scrollbar {
+      display: none;
+    }
+    .no-scrollbar {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col justify-between selection:bg-red-700 selection:text-white">
+
+  <!-- Üst Kırmızı Editoryal Şerit -->
+  <div class="bg-[#991B1B] text-red-50 text-[11px] tracking-wider uppercase py-1.5 px-4">
+    <div class="max-w-4xl mx-auto flex flex-wrap items-center justify-between gap-2">
+      <div class="flex items-center gap-3 font-medium">
+        <span id="currentDateLabel">GÜNCEL BÜLTEN</span>
+        <span class="text-red-300/60">|</span>
+        <span><strong id="totalNewsCount" class="text-white font-bold">0</strong> HABER</span>
+        <span class="text-red-300/60">|</span>
+        <span><strong id="sourceCount" class="text-white font-bold">21</strong> KAYNAK</span>
+      </div>
+      <div class="flex items-center gap-2">
+        <span id="activeEngineBadge" class="inline-flex items-center gap-1.5 font-semibold text-white">
+          <span class="w-1.5 h-1.5 rounded-full bg-white"></span>
+          Yerel NLP (Sıfır Token)
+        </span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Başlık ve Kontroller -->
+  <header class="bg-[#FAF8F5]/95 backdrop-blur-sm border-b border-stone-300 sticky top-0 z-40">
+    <div class="max-w-4xl mx-auto px-4 sm:px-6">
+      <div class="py-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div class="border-l-4 border-[#B91C1C] pl-3.5">
+          <h1 class="font-editorial text-3xl sm:text-4xl font-bold tracking-tight text-stone-950 leading-none">
+            Gündem Özeti
+          </h1>
+          <p class="text-xs text-stone-600 mt-1.5">
+            TRT, BBC, NTV, AA, Webrazzi ve 20+ kaynaktan derlenen özet akışı ve doğrudan kaynak dizini
+          </p>
+        </div>
+
+        <!-- Arama ve Aksiyon Butonları -->
+        <div class="flex items-center gap-2">
+          <div class="relative flex-1 sm:w-56">
+            <input 
+              id="searchInput"
+              type="text" 
+              placeholder="Başlık veya özet ara..." 
+              class="w-full pl-8 pr-3 py-2 text-xs bg-white border border-stone-300 rounded text-stone-900 placeholder-stone-400 focus:outline-none focus:border-[#B91C1C] transition-colors"
+            />
+            <svg class="w-3.5 h-3.5 text-stone-400 absolute left-2.5 top-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+            </svg>
+          </div>
+
+          <button 
+            onclick="toggleKeyModal()" 
+            title="Groq API Anahtarı Ayarları"
+            class="px-3 py-2 text-xs font-medium text-stone-700 bg-white border border-stone-300 rounded hover:border-[#B91C1C] hover:text-[#B91C1C] transition-colors">
+            API Ayarı
+          </button>
+
+          <button 
+            id="refreshBtn"
+            onclick="triggerRefresh()" 
+            class="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-[#B91C1C] rounded hover:bg-[#991B1B] active:bg-red-950 transition-colors">
+            <svg id="refreshIcon" class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+            </svg>
+            <span id="refreshBtnText">Yenile</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Kategori Sekmeleri -->
+      <nav class="flex items-center gap-6 overflow-x-auto no-scrollbar border-t border-stone-200 text-xs font-medium" id="categoryFilters">
+        <button onclick="filterCategory('Tümü')" class="cat-btn py-3 border-b-2 border-[#B91C1C] text-[#B91C1C] font-bold whitespace-nowrap transition-colors">Tümü</button>
+        <button onclick="filterCategory('Savunma & Teknoloji')" class="cat-btn py-3 border-b-2 border-transparent text-stone-600 hover:text-[#B91C1C] whitespace-nowrap transition-colors">Savunma & Teknoloji</button>
+        <button onclick="filterCategory('Bilim')" class="cat-btn py-3 border-b-2 border-transparent text-stone-600 hover:text-[#B91C1C] whitespace-nowrap transition-colors">Bilim</button>
+        <button onclick="filterCategory('Ekonomi')" class="cat-btn py-3 border-b-2 border-transparent text-stone-600 hover:text-[#B91C1C] whitespace-nowrap transition-colors">Ekonomi</button>
+        <button onclick="filterCategory('Politika & Gündem')" class="cat-btn py-3 border-b-2 border-transparent text-stone-600 hover:text-[#B91C1C] whitespace-nowrap transition-colors">Politika & Gündem</button>
+        <button onclick="filterCategory('Dünya')" class="cat-btn py-3 border-b-2 border-transparent text-stone-600 hover:text-[#B91C1C] whitespace-nowrap transition-colors">Dünya</button>
+        <button onclick="filterCategory('Spor')" class="cat-btn py-3 border-b-2 border-transparent text-stone-600 hover:text-[#B91C1C] whitespace-nowrap transition-colors">Spor</button>
+        <button onclick="filterCategory('Genel Gündem')" class="cat-btn py-3 border-b-2 border-transparent text-stone-600 hover:text-[#B91C1C] whitespace-nowrap transition-colors">Genel Gündem</button>
+      </nav>
+    </div>
+  </header>
+
+  <!-- Ana Haber Akışı -->
+  <main class="max-w-4xl mx-auto px-4 sm:px-6 py-8 w-full flex-1">
+
+    <!-- Bildirim Çubuğu -->
+    <div id="toastMessage" class="hidden mb-6 px-4 py-3 bg-white border-l-4 border-[#B91C1C] border-y border-r border-stone-200 text-stone-800 text-xs flex items-center justify-between">
+      <span id="toastText" class="font-medium">İşlem tamamlandı.</span>
+      <button onclick="hideToast()" class="text-stone-400 hover:text-[#B91C1C] font-semibold ml-4">Kapat</button>
+    </div>
+
+    <!-- Haber Listesi -->
+    <div id="newsGrid" class="divide-y divide-stone-200 bg-white border border-stone-200/90 rounded-md shadow-[0_1px_2px_rgba(0,0,0,0.03)]">
+      <div class="py-20 text-center text-stone-400">
+        <div class="inline-block animate-spin w-5 h-5 border-2 border-[#B91C1C] border-t-transparent rounded-full mb-3"></div>
+        <p class="text-xs font-medium tracking-wide uppercase text-stone-500">Haber akışı yükleniyor...</p>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Alt Bilgi -->
+  <footer class="border-t border-stone-300 bg-[#FAF8F5] py-6 text-xs text-stone-500 mt-12">
+    <div class="max-w-4xl mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-3">
+      <p>Gündem Özeti — Bağımsız RSS Derleyici & Yerel NLP Motoru</p>
+      <div class="flex items-center gap-4">
+        <a href="/api/news" target="_blank" class="hover:text-[#B91C1C] underline underline-offset-4">JSON Akışı (/api/news)</a>
+        <a href="/api/status" target="_blank" class="hover:text-[#B91C1C] underline underline-offset-4">Sistem Durumu</a>
+      </div>
+    </div>
+  </footer>
+
+  <!-- API Anahtarı Penceresi -->
+  <div id="keyModal" class="hidden fixed inset-0 z-50 bg-stone-950/40 backdrop-blur-[1px] flex items-center justify-center p-4">
+    <div class="bg-[#FAF8F5] rounded-md max-w-md w-full p-6 border border-stone-300 shadow-lg">
+      <div class="flex items-center justify-between pb-3 border-b border-stone-200 mb-4">
+        <h3 class="font-editorial text-xl font-bold text-stone-950">Groq API Yapılandırması</h3>
+        <button onclick="toggleKeyModal()" class="text-stone-400 hover:text-stone-800 text-lg leading-none">&times;</button>
+      </div>
+
+      <p class="text-xs text-stone-600 mb-4 leading-relaxed">
+        Haber özetlerini <strong>Groq LLaMA 3.3</strong> modeliyle oluşturmak için ücretsiz API anahtarınızı girebilirsiniz. Anahtar yalnızca tarayıcınızda saklanır.
+      </p>
+
+      <div class="bg-white border-l-2 border-[#B91C1C] border-y border-r border-stone-200 p-3 text-[11px] text-stone-600 mb-4 leading-relaxed">
+        <strong>Not:</strong> Anahtar girilmediğinde sistem harici kota kullanmadan yerleşik <strong>Yerel NLP (TextRank)</strong> motoru ile özetleme yapar.
+      </div>
+
+      <div class="space-y-4">
+        <div>
+          <label class="block text-[11px] font-semibold text-stone-700 uppercase tracking-wider mb-1.5">Groq API Anahtarı (İsteğe Bağlı)</label>
+          <input 
+            id="groqApiKeyInput" 
+            type="password" 
+            placeholder="gsk_..." 
+            class="w-full px-3 py-2 text-xs bg-white border border-stone-300 rounded focus:outline-none focus:border-[#B91C1C] font-mono"
+          />
+        </div>
+
+        <div class="flex items-center justify-between text-xs">
+          <a href="https://console.groq.com/keys" target="_blank" rel="noopener noreferrer" class="text-[#B91C1C] font-semibold hover:underline">
+            Ücretsiz anahtar al (console.groq.com) ↗
+          </a>
+          <button onclick="clearApiKey()" class="text-stone-500 hover:text-[#B91C1C]">Anahtarı Temizle</button>
+        </div>
+
+        <div class="pt-4 border-t border-stone-200 flex items-center justify-end gap-2">
+          <button onclick="toggleKeyModal()" class="px-3.5 py-1.5 text-xs font-medium text-stone-600 hover:text-stone-900">İptal</button>
+          <button onclick="saveApiKey()" class="px-4 py-1.5 text-xs font-semibold text-white bg-[#B91C1C] hover:bg-[#991B1B] rounded transition-colors">Kaydet</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let allNews = [];
+    let currentCategory = 'Tümü';
+    let refreshToken = '';
+    let inMemoryApiKey = '';
+
+    (function setHeaderDate() {
+      const el = document.getElementById('currentDateLabel');
+      if (el) {
+        const now = new Date();
+        el.innerText = now.toLocaleDateString('tr-TR', {
+          day: 'numeric',
+          month: 'long',
+          year: 'numeric',
+          weekday: 'long'
+        }).toUpperCase();
+      }
+    })();
+
+    function esc(str) {
+      if (str === null || str === undefined) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    function safeUrl(url) {
+      try {
+        const u = new URL(url);
+        return (u.protocol === 'https:' || u.protocol === 'http:') ? u.href : '#';
+      } catch {
+        return '#';
+      }
+    }
+
+    function formatTimeLabel(isoStr) {
+      if (!isoStr) return 'Güncel';
+      try {
+        const d = new Date(isoStr);
+        if (isNaN(d.getTime())) return isoStr;
+        return d.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }) + ' · ' +
+               d.toLocaleDateString('tr-TR', { day: '2-digit', month: 'short' });
+      } catch {
+        return isoStr;
+      }
+    }
+
+    function getSavedApiKey() {
+      try {
+        return localStorage.getItem('groq_api_key') || inMemoryApiKey;
+      } catch (e) {
+        return inMemoryApiKey;
+      }
+    }
+
+    function toggleKeyModal() {
+      const modal = document.getElementById('keyModal');
+      modal.classList.toggle('hidden');
+      if (!modal.classList.contains('hidden')) {
+        document.getElementById('groqApiKeyInput').value = getSavedApiKey();
+      }
+    }
+
+    function saveApiKey() {
+      const inputEl = document.getElementById('groqApiKeyInput');
+      const val = inputEl ? inputEl.value.trim() : '';
+      inMemoryApiKey = val;
+
+      try {
+        if (val) {
+          localStorage.setItem('groq_api_key', val);
+        } else {
+          localStorage.removeItem('groq_api_key');
+        }
+      } catch (e) {
+        console.warn("localStorage kısıtlı, oturum belleğine kaydedildi.");
+      }
+
+      if (val) {
+        showToast("Groq API anahtarı kaydedildi. Yenileme sırasında LLaMA 3.3 kullanılacak.");
+      } else {
+        showToast("API anahtarı temizlendi. Yerel NLP motoru aktif.");
+      }
+      toggleKeyModal();
+      updateEngineBadge();
+    }
+
+    function clearApiKey() {
+      inMemoryApiKey = '';
+      try {
+        localStorage.removeItem('groq_api_key');
+      } catch (e) {}
+      const inputEl = document.getElementById('groqApiKeyInput');
+      if (inputEl) inputEl.value = '';
+      showToast("API anahtarı kaldırıldı. Yerel NLP motoruna geçildi.");
+      toggleKeyModal();
+      updateEngineBadge();
+    }
+
+    function updateEngineBadge() {
+      const badge = document.getElementById('activeEngineBadge');
+      if (!badge) return;
+      const hasKey = !!getSavedApiKey();
+      if (hasKey) {
+        badge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-amber-300"></span> Groq LLaMA 3.3';
+      } else {
+        badge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-white"></span> Yerel NLP (Sıfır Token)';
+      }
+    }
+
+    function showToast(msg) {
+      const toast = document.getElementById('toastMessage');
+      document.getElementById('toastText').innerText = msg;
+      toast.classList.remove('hidden');
+      setTimeout(() => {
+        toast.classList.add('hidden');
+      }, 6000);
+    }
+
+    function hideToast() {
+      document.getElementById('toastMessage').classList.add('hidden');
+    }
+
+    function updateCounters(articles) {
+      document.getElementById('totalNewsCount').innerText = articles.length;
+      const uniqueSources = new Set(articles.map(a => a.source).filter(Boolean)).size;
+      if (uniqueSources > 0) {
+        document.getElementById('sourceCount').innerText = uniqueSources;
+      }
+    }
+
+    async function fetchRefreshToken() {
+      try {
+        const res = await fetch('/api/status');
+        const data = await res.json();
+        if (data.refresh_token) {
+          refreshToken = data.refresh_token;
+        }
+      } catch (e) {
+        console.error("Refresh token alınamadı:", e);
+      }
+    }
+
+    async function loadNews() {
+      const grid = document.getElementById('newsGrid');
+      try {
+        const res = await fetch('/api/news');
+        if (!res.ok) {
+          throw new Error(`Sunucu hatası: HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        if (data.success && Array.isArray(data.articles)) {
+          allNews = data.articles;
+          updateCounters(allNews);
+          renderNews();
+        } else {
+          throw new Error(data.error || "Geçersiz API yanıtı");
+        }
+      } catch (e) {
+        console.error("API'den haberler çekilemedi:", e);
+        grid.innerHTML = `
+          <div class="py-16 px-6 text-center">
+            <p class="font-editorial text-lg font-semibold text-[#B91C1C]">Haber akışı yüklenemedi</p>
+            <p class="text-xs text-stone-500 mt-1">${esc(e.message)} — Sunucu terminalini kontrol edip Yenile butonuna basın.</p>
+          </div>
+        `;
+      }
+    }
+
+    async function sendRefreshRequest(apiKey) {
+      return await fetch('/api/refresh', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Groq-Api-Key': apiKey,
+          'X-Refresh-Token': refreshToken
+        },
+        body: JSON.stringify({ api_key: apiKey })
+      });
+    }
+
+    async function triggerRefresh() {
+      const refreshBtn = document.getElementById('refreshBtn');
+      const refreshIcon = document.getElementById('refreshIcon');
+      const refreshText = document.getElementById('refreshBtnText');
+
+      refreshBtn.disabled = true;
+      refreshBtn.classList.add('opacity-70', 'cursor-not-allowed');
+      refreshIcon.classList.add('animate-spin');
+      refreshText.innerText = "Taranıyor...";
+
+      const apiKey = getSavedApiKey();
+
+      try {
+        if (!refreshToken) {
+          await fetchRefreshToken();
+        }
+
+        let response = await sendRefreshRequest(apiKey);
+
+        if (response.status === 401) {
+          await fetchRefreshToken();
+          response = await sendRefreshRequest(apiKey);
+        }
+
+        const result = await response.json();
+        if (result.success && result.articles) {
+          allNews = result.articles;
+          updateCounters(allNews);
+          renderNews();
+          showToast(`${result.count} haber güncellendi ve özetlendi.`);
+        } else {
+          showToast(result.error || "Yenileme tamamlandı ancak yeni haber bulunamadı.");
+        }
+      } catch (err) {
+        console.error("Yenileme hatası:", err);
+        showToast("Haberler yenilenirken bağlantı hatası oluştu.");
+      } finally {
+        refreshBtn.disabled = false;
+        refreshBtn.classList.remove('opacity-70', 'cursor-not-allowed');
+        refreshIcon.classList.remove('animate-spin');
+        refreshText.innerText = "Yenile";
+      }
+    }
+
+    function renderNews() {
+      const grid = document.getElementById('newsGrid');
+      const searchTerm = document.getElementById('searchInput').value.toLowerCase();
+
+      const filtered = allNews.filter(item => {
+        const matchesCat = currentCategory === 'Tümü' || item.category === currentCategory;
+        const matchesSearch = (item.title || '').toLowerCase().includes(searchTerm) ||
+                              (item.summary || '').toLowerCase().includes(searchTerm);
+        return matchesCat && matchesSearch;
+      });
+
+      if (filtered.length === 0) {
+        grid.innerHTML = `
+          <div class="py-16 px-6 text-center">
+            <p class="font-editorial text-lg font-semibold text-stone-800">Eşleşen haber bulunamadı</p>
+            <p class="text-xs text-stone-500 mt-1">Arama terimini değiştirebilir veya sağ üstten akışı yenileyebilirsiniz.</p>
+          </div>
+        `;
+        return;
+      }
+
+      grid.innerHTML = filtered.map(item => {
+        const safeLink = safeUrl(item.link);
+        const timeLabel = formatTimeLabel(item.updated_at || item.published);
+        const engineLabel = item.ai_engine || 'Yerel NLP';
+
+        return `
+        <article class="p-5 sm:p-6 hover:bg-[#FAF8F5] transition-colors group">
+          <!-- Üst Meta Veriler -->
+          <div class="flex flex-wrap items-center justify-between gap-2 text-[11px] uppercase tracking-wider text-stone-500 mb-2">
+            <div class="flex items-center gap-2">
+              <span class="font-bold text-[#B91C1C]">${esc(item.source)}</span>
+              <span class="text-stone-300">•</span>
+              <span class="font-medium text-stone-700">${esc(item.category)}</span>
+            </div>
+            <div class="flex items-center gap-2 text-stone-400">
+              <span>${esc(engineLabel)}</span>
+              <span>•</span>
+              <time>${esc(timeLabel)}</time>
+            </div>
+          </div>
+
+          <!-- Haber Başlığı -->
+          <h2 class="font-editorial text-xl sm:text-[22px] font-semibold text-stone-950 leading-snug mb-2.5">
+            <a href="${safeLink}" target="_blank" rel="noopener noreferrer" class="group-hover:text-[#B91C1C] transition-colors">
+              ${esc(item.title)}
+            </a>
+          </h2>
+
+          <!-- Özet Metni -->
+          <p class="text-sm text-stone-600 leading-relaxed mb-4">
+            ${esc(item.summary)}
+          </p>
+
+          <!-- Alt Satır: Çoklu Kaynak ve Doğrudan Kaynak Linki -->
+          <div class="flex flex-wrap items-center justify-between gap-3 pt-1">
+            <div>
+              ${item.related_count > 0 ? `
+                <span class="text-xs text-stone-500">
+                  Ayrıca gündemde: <strong class="font-medium text-stone-800">${esc(item.related_sources.join(', '))}</strong>
+                </span>
+              ` : ''}
+            </div>
+
+            <a href="${safeLink}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1 text-xs font-semibold text-[#B91C1C] hover:text-[#991B1B] transition-colors ml-auto">
+              Kaynağa Git
+              <span aria-hidden="true" class="transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5">↗</span>
+            </a>
+          </div>
+        </article>
+      `}).join('');
+    }
+
+    function filterCategory(cat) {
+      currentCategory = cat;
+      document.querySelectorAll('.cat-btn').forEach(btn => {
+        if (btn.innerText === cat) {
+          btn.className = 'cat-btn py-3 border-b-2 border-[#B91C1C] text-[#B91C1C] font-bold whitespace-nowrap transition-colors';
+        } else {
+          btn.className = 'cat-btn py-3 border-b-2 border-transparent text-stone-600 hover:text-[#B91C1C] whitespace-nowrap transition-colors';
+        }
+      });
+      renderNews();
+    }
+
+    document.getElementById('searchInput').addEventListener('input', renderNews);
+
+    updateEngineBadge();
+    fetchRefreshToken();
+    loadNews();
+  </script>
+</body>
+</html>
