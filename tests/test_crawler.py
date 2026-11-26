@@ -146,6 +146,11 @@ class TestFetchNews:
         assert len(articles) == 1
         assert articles[0]["title"] == "Cached Haber"
         assert articles[0]["source"] == "Test Source"
+        # Cached (pipeline-output schema) articles are normalized to crawler
+        # schema so the downstream NLP pipeline always has a "content" field.
+        assert "content" in articles[0]
+        assert articles[0]["content"] == "Cached content"
+        assert all(a.get("content") for a in articles)
 
     @patch("backend.crawler.feedparser.parse")
     def test_fetch_news_empty_title_filtered(self, mock_parse):

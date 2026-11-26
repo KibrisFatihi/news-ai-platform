@@ -22,6 +22,7 @@ from backend.middleware import (
     create_error_response,
     create_success_response,
     format_http_date,
+    generate_refresh_token,
     generate_request_id,
     get_cors_headers,
     handle_options_request,
@@ -70,6 +71,23 @@ def _normalize_article(item: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _get_header(headers: Dict[str, str], name: str) -> Optional[str]:
+    """Case-insensitive header lookup.
+
+    Browsers may send header names in lowercase (e.g. ``x-refresh-token``,
+    ``x-groq-api-key``), but a plain ``dict`` lookup is case-sensitive. Check
+    the exact name first, then fall back to a case-insensitive scan so both
+    callers (HTTP server and direct unit tests) work regardless of casing.
+    """
+    if name in headers:
+        return headers[name]
+    lowered = name.lower()
+    for key, value in headers.items():
+        if key.lower() == lowered:
+            return value
+    return None
+
+
 def handle_get_news(
     request_headers: Dict[str, str],
     request_id: str
@@ -88,7 +106,7 @@ def handle_get_news(
 
     # Check conditional request
     if check_conditional_request(request_headers, cache_etag, cache_last_modified):
-        headers = get_cors_headers(request_headers.get("Origin", ""))
+        headers = get_cors_headers(_get_header(request_headers, "Origin"))
         add_cache_headers(headers, cache_etag, cache_last_modified)
         log_api_request(logger, "GET", "/api/news", 304, (time.time() - start_time) * 1000, request_id)
         return 304, headers, {}
@@ -114,12 +132,12 @@ def handle_get_news(
         logger.exception(f"NewsResponse validation failed [{request_id}]: {e}")
         raise
 
-    headers = get_cors_headers(request_headers.get("Origin", ""))
+    headers = get_cors_headers(_get_header(request_headers, "Origin"))
     add_cache_headers(
         headers,
         etag=cache_etag,
         last_modified=cache_last_modified,
-        cache_control=f"max-age={server_cfg.cache_ttl_seconds}"
+        cache_control="no-cache, must-revalidate"
     )
 
     log_api_request(logger, "GET", "/api/news", 200, (time.time() - start_time) * 1000, request_id)
@@ -141,10 +159,11 @@ def handle_get_status(
         groq_connected=bool(groq_key),
         model=cfg.groq.default_model,
         mode="hybrid",
-        uptime_seconds=time.time() - _server_start_time
+        uptime_seconds=time.time() - _server_start_time,
+        refresh_token=generate_refresh_token()
     ).model_dump()
 
-    headers = get_cors_headers(request_headers.get("Origin", ""))
+    headers = get_cors_headers(_get_header(request_headers, "Origin"))
     log_api_request(logger, "GET", "/api/status", 200, (time.time() - start_time) * 1000, request_id)
     return 200, headers, response_data
 
@@ -187,7 +206,7 @@ def handle_get_health(
         response_data.status = "degraded"
         response_data.warnings = ["One or more circuit breakers are OPEN"]
 
-    headers = get_cors_headers(request_headers.get("Origin", ""))
+    headers = get_cors_headers(_get_header(request_headers, "Origin"))
     log_api_request(logger, "GET", "/api/health", 200, (time.time() - start_time) * 1000, request_id)
     return 200, headers, response_data.model_dump()
 
@@ -208,19 +227,19 @@ def handle_post_refresh(
     content_length = len(request_body)
     if content_length > server_cfg.max_request_size_mb * 1024 * 1024:
         error_resp = create_error_response("Request too large", 413, request_id)
-        headers = get_cors_headers(request_headers.get("Origin", ""))
+        headers = get_cors_headers(_get_header(request_headers, "Origin"))
         log_api_request(logger, "POST", "/api/refresh", 413, (time.time() - start_time) * 1000, request_id)
         return 413, headers, error_resp
 
-    # Verify refresh token
-    refresh_token = request_headers.get("X-Refresh-Token")
+    # Verify refresh token (header okuması büyük/küçük harfe duyarsız)
+    refresh_token = _get_header(request_headers, "X-Refresh-Token")
     if not verify_refresh_token(refresh_token):
         logger.warning(
             "Invalid or missing X-Refresh-Token",
             extra={"extra_fields": {"event": "refresh_token_invalid"}}
         )
         error_resp = create_error_response("Unauthorized: Invalid refresh token", 401, request_id)
-        headers = get_cors_headers(request_headers.get("Origin", ""))
+        headers = get_cors_headers(_get_header(request_headers, "Origin"))
         log_api_request(logger, "POST", "/api/refresh", 401, (time.time() - start_time) * 1000, request_id)
         return 401, headers, error_resp
 
@@ -232,7 +251,7 @@ def handle_post_refresh(
             extra={"extra_fields": {"event": "refresh_rate_limit_exceeded", "ip": client_ip}}
         )
         error_resp = create_error_response("Rate limit exceeded. Try again later.", 429, request_id)
-        headers = get_cors_headers(request_headers.get("Origin", ""))
+        headers = get_cors_headers(_get_header(request_headers, "Origin"))
         headers["Retry-After"] = str(retry_after)
         log_api_request(logger, "POST", "/api/refresh", 429, (time.time() - start_time) * 1000, request_id)
         return 429, headers, error_resp
@@ -245,7 +264,7 @@ def handle_post_refresh(
             extra={"extra_fields": {"event": "refresh_concurrent_blocked"}}
         )
         error_resp = create_error_response("Refresh already in progress", 409, request_id)
-        headers = get_cors_headers(request_headers.get("Origin", ""))
+        headers = get_cors_headers(_get_header(request_headers, "Origin"))
         log_api_request(logger, "POST", "/api/refresh", 409, (time.time() - start_time) * 1000, request_id)
         return 409, headers, error_resp
 
@@ -263,7 +282,7 @@ def handle_post_refresh(
                 )
 
         # Header takes precedence over body
-        header_key = request_headers.get("X-Groq-Api-Key")
+        header_key = _get_header(request_headers, "X-Groq-Api-Key")
         if header_key:
             api_key = header_key
 
@@ -284,10 +303,39 @@ def handle_post_refresh(
 
         # Import here to avoid circular import
         from main import run_pipeline
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+
+        # Run the pipeline with a hard timeout so a hung RSS feed or Groq call
+        # cannot hold the refresh lock (and the browser "Taranıyor..." state)
+        # indefinitely.
+        pipeline_timeout_seconds = 120
+        try:
+            with ThreadPoolExecutor(max_workers=1) as pipeline_executor:
+                future = pipeline_executor.submit(run_pipeline, api_key=api_key)
+                articles = future.result(timeout=pipeline_timeout_seconds) or []
+
+            logger.info(
+                "Pipeline refresh completed",
+                extra={"extra_fields": {
+                    "event": "pipeline_refresh_completed",
+                    "article_count": len(articles)
+                }}
+            )
+        except FutureTimeoutError:
+            logger.error(
+                f"Pipeline refresh timed out after {pipeline_timeout_seconds} seconds",
+                extra={"extra_fields": {"event": "pipeline_refresh_timeout"}}
+            )
+            error_resp = create_error_response(
+                "Refresh timed out. Sunucu yanıt vermedi, lütfen tekrar deneyin.",
+                504,
+                request_id
+            )
+            headers = get_cors_headers(_get_header(request_headers, "Origin"))
+            log_api_request(logger, "POST", "/api/refresh", 504, (time.time() - start_time) * 1000, request_id)
+            return 504, headers, error_resp
 
         try:
-            articles = run_pipeline(api_key=api_key) or []
-
             # Normalize articles to ensure all required fields for Article model
             normalized_articles = [_normalize_article(a) for a in articles]
 
@@ -298,17 +346,16 @@ def handle_post_refresh(
                 articles=[Article(**a) for a in normalized_articles]
             ).model_dump()
 
-            headers = get_cors_headers(request_headers.get("Origin", ""))
+            headers = get_cors_headers(_get_header(request_headers, "Origin"))
             log_api_request(logger, "POST", "/api/refresh", 200, (time.time() - start_time) * 1000, request_id)
             return 200, headers, response_data
-
         except Exception as e:
             logger.exception(
                 f"Pipeline execution failed [{request_id}]: {e}",
                 extra={"extra_fields": {"event": "pipeline_error", "error": str(e), "request_id": request_id}}
             )
             error_resp = create_error_response("Internal server error", 500, request_id)
-            headers = get_cors_headers(request_headers.get("Origin", ""))
+            headers = get_cors_headers(_get_header(request_headers, "Origin"))
             log_api_request(logger, "POST", "/api/refresh", 500, (time.time() - start_time) * 1000, request_id)
             return 500, headers, error_resp
 
@@ -320,7 +367,7 @@ def handle_options(
     request_headers: Dict[str, str]
 ) -> Tuple[int, Dict[str, str], Dict[str, Any]]:
     """Handle OPTIONS preflight request."""
-    origin = request_headers.get("Origin", "")
+    origin = _get_header(request_headers, "Origin")
     status, headers = handle_options_request(origin)
     return status, headers, {}
 
@@ -331,5 +378,5 @@ def handle_not_found(
 ) -> Tuple[int, Dict[str, str], Dict[str, Any]]:
     """Handle 404 for unknown endpoints."""
     error_resp = create_error_response("Endpoint not found", 404, request_id)
-    headers = get_cors_headers(request_headers.get("Origin", ""))
+    headers = get_cors_headers(_get_header(request_headers, "Origin"))
     return 404, headers, error_resp

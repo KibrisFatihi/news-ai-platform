@@ -114,6 +114,7 @@ class NewsAPIRequestHandler(http.server.SimpleHTTPRequestHandler):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(cfg.frontend_dir), **kwargs)
+    
 
     def handle_one_request(self):
         super().handle_one_request()
@@ -146,6 +147,16 @@ class NewsAPIRequestHandler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
         if response_bytes:
             self.wfile.write(response_bytes)
+
+    def end_headers(self):
+        """Stik dosya yanıtlarına önbellek-devre dışı başlığı ekle.
+
+        /api/ endpoint'lerinin zaten ayarladığı Cache-Control/ETag/Last-Modified
+        başlıklarıyla çakışmasın diye sadece statik dosya yanıtlarına uygulanır.
+        """
+        if not self.path.startswith("/api/"):
+            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+        super().end_headers()
 
     def do_OPTIONS(self):
         """Handle CORS pre-flight requests."""

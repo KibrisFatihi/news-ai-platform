@@ -102,6 +102,17 @@ class TestNewsEndpoint:
             response2 = api_client.get("/api/news", headers={"If-Modified-Since": last_modified})
             assert response2["status_code"] in [200, 304]
 
+    def test_news_endpoint_cache_control_no_cache(self, api_client):
+        """News responses must revalidate (no max-age) while keeping ETag/Last-Modified validators."""
+        response = api_client.get("/api/news")
+
+        cache_control = response["headers"]["cache-control"]
+        assert "no-cache" in cache_control
+        assert "must-revalidate" in cache_control
+        assert "max-age" not in cache_control
+        assert "etag" in response["headers"]
+        assert "last-modified" in response["headers"]
+
 
 class TestStatusEndpoint:
     """Tests for /api/status endpoint."""
@@ -122,6 +133,13 @@ class TestStatusEndpoint:
         assert "model" in data
         assert "mode" in data
         assert "uptime_seconds" in data
+
+    def test_status_endpoint_returns_refresh_token(self, api_client):
+        """Status response must include refresh_token so the frontend can send it on /api/refresh."""
+        response = api_client.get("/api/status")
+
+        assert "refresh_token" in response["json"]
+        assert response["json"]["refresh_token"]
 
 
 class TestRefreshEndpoint:
@@ -210,8 +228,28 @@ class TestRefreshEndpoint:
         mock_pipeline.assert_called_once_with(api_key="gsk_header_key")
 
     @patch("main.run_pipeline")
+    def test_refresh_endpoint_case_insensitive_headers(self, mock_pipeline, api_client):
+        """Browsers may send header names in lowercase (x-refresh-token, x-groq-api-key); they must be honored."""
+        mock_pipeline.return_value = []
+
+        response = api_client.post(
+            "/api/refresh",
+            json_data={},
+            headers={"x-refresh-token": TEST_REFRESH_TOKEN, "x-groq-api-key": "gsk_lower_key"},
+        )
+
+        assert response["status_code"] == 200
+        mock_pipeline.assert_called_once_with(api_key="gsk_lower_key")
+
+    @patch("main.run_pipeline")
     def test_refresh_endpoint_error(self, mock_pipeline, api_client):
         """Test refresh endpoint error handling."""
+        # Rate limiter is module-global; reset so this test stays independent of order.
+        from backend.middleware import _refresh_rate_limit, _refresh_rate_limit_lock
+
+        with _refresh_rate_limit_lock:
+            _refresh_rate_limit.clear()
+
         mock_pipeline.side_effect = Exception("Pipeline failed")
 
         response = api_client.post(
@@ -307,6 +345,16 @@ class TestStaticFiles:
         assert response["status_code"] == 302
         assert "location" in response["headers"]
         assert "index.html" in response["headers"]["location"]
+
+    def test_static_file_served_with_no_store(self, api_client):
+        """Static files (index.html, JS, CSS) must not be cached by browsers."""
+        response = api_client.get("/index.html")
+
+        assert response["status_code"] == 200
+        cache_control = response["headers"]["cache-control"]
+        assert "no-store" in cache_control
+        assert "no-cache" in cache_control
+        assert "must-revalidate" in cache_control
 
 
 class TestErrorHandling:

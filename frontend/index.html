@@ -41,10 +41,7 @@
         <span><strong id="sourceCount" class="text-white font-bold">21</strong> KAYNAK</span>
       </div>
       <div class="flex items-center gap-2">
-        <span id="activeEngineBadge" class="inline-flex items-center gap-1.5 font-semibold text-white">
-          <span class="w-1.5 h-1.5 rounded-full bg-white"></span>
-          Yerel NLP (Sıfır Token)
-        </span>
+        <span id="activeEngineBadge" class="inline-flex items-center gap-1.5 font-semibold text-white"></span>
       </div>
     </div>
   </div>
@@ -131,7 +128,7 @@
   <!-- Alt Bilgi -->
   <footer class="border-t border-stone-300 bg-[#FAF8F5] py-6 text-xs text-stone-500 mt-12">
     <div class="max-w-4xl mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-3">
-      <p>Gündem Özeti — Bağımsız RSS Derleyici & Yerel NLP Motoru</p>
+      <p>Gündem Özeti — Bağımsız RSS Derleyici & Otomatik Özetleme</p>
       <div class="flex items-center gap-4">
         <a href="/api/news" target="_blank" class="hover:text-[#B91C1C] underline underline-offset-4">JSON Akışı (/api/news)</a>
         <a href="/api/status" target="_blank" class="hover:text-[#B91C1C] underline underline-offset-4">Sistem Durumu</a>
@@ -152,7 +149,7 @@
       </p>
 
       <div class="bg-white border-l-2 border-[#B91C1C] border-y border-r border-stone-200 p-3 text-[11px] text-stone-600 mb-4 leading-relaxed">
-        <strong>Not:</strong> Anahtar girilmediğinde sistem harici kota kullanmadan yerleşik <strong>Yerel NLP (TextRank)</strong> motoru ile özetleme yapar.
+        <strong>Not:</strong> Anahtar girilmediğinde sistem harici kota kullanmadan yerleşik özetleme motoru ile çalışır.
       </div>
 
       <div class="space-y-4">
@@ -265,7 +262,7 @@
       if (val) {
         showToast("Groq API anahtarı kaydedildi. Yenileme sırasında LLaMA 3.3 kullanılacak.");
       } else {
-        showToast("API anahtarı temizlendi. Yerel NLP motoru aktif.");
+        showToast("API anahtarı temizlendi. Otomatik özetleme aktif.");
       }
       toggleKeyModal();
       updateEngineBadge();
@@ -278,7 +275,7 @@
       } catch (e) {}
       const inputEl = document.getElementById('groqApiKeyInput');
       if (inputEl) inputEl.value = '';
-      showToast("API anahtarı kaldırıldı. Yerel NLP motoruna geçildi.");
+      showToast("API anahtarı kaldırıldı. Otomatik özetlemeye geçildi.");
       toggleKeyModal();
       updateEngineBadge();
     }
@@ -290,7 +287,7 @@
       if (hasKey) {
         badge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-amber-300"></span> Groq LLaMA 3.3';
       } else {
-        badge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-white"></span> Yerel NLP (Sıfır Token)';
+        badge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-white"></span> Otomatik Özet';
       }
     }
 
@@ -330,7 +327,7 @@
     async function loadNews() {
       const grid = document.getElementById('newsGrid');
       try {
-        const res = await fetch('/api/news');
+        const res = await fetch('/api/news', { cache: 'no-store' });
         if (!res.ok) {
           throw new Error(`Sunucu hatası: HTTP ${res.status}`);
         }
@@ -433,7 +430,6 @@
       grid.innerHTML = filtered.map(item => {
         const safeLink = safeUrl(item.link);
         const timeLabel = formatTimeLabel(item.updated_at || item.published);
-        const engineLabel = item.ai_engine || 'Yerel NLP';
 
         return `
         <article class="p-5 sm:p-6 hover:bg-[#FAF8F5] transition-colors group">
@@ -445,8 +441,6 @@
               <span class="font-medium text-stone-700">${esc(item.category)}</span>
             </div>
             <div class="flex items-center gap-2 text-stone-400">
-              <span>${esc(engineLabel)}</span>
-              <span>•</span>
               <time>${esc(timeLabel)}</time>
             </div>
           </div>

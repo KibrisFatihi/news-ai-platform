@@ -154,6 +154,20 @@ def fetch_news(
         )
         articles = repo.load_or_fallback() or []
         if articles:
+            # Cached feeds are stored in the pipeline-output schema
+            # ("original_content", "summary") while the crawler contract and the
+            # downstream NLP pipeline expect crawler-schema articles with a
+            # "content" field. Normalize cached articles so every article has
+            # usable content (prevents KeyError: 'content' when RSS is
+            # unreachable and the fallback cache is used).
+            for article in articles:
+                if not article.get("content"):
+                    article["content"] = (
+                        article.get("original_content")
+                        or article.get("summary")
+                        or article.get("title")
+                        or ""
+                    )
             logger.info(
                 f"Fallback cache loaded: {len(articles)} articles",
                 extra={"extra_fields": {
