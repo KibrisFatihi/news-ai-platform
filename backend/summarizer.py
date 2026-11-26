@@ -167,7 +167,7 @@ class GroqSummarizer:
             # amount of retrying will make it succeed. Signal the resilient
             # summarizer to fall back to local NLP for the rest of this run.
             if response.status_code == 404 and "model_not_found" in response.text:
-                raise ModelUnavailableError(error_msg, response=response)
+                raise ModelUnavailableError(error_msg)
             raise requests.HTTPError(error_msg, response=response)
 
     def summarize(self, title: str, content: str) -> SummarizeResult:
