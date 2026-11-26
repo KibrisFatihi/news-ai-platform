@@ -32,6 +32,13 @@ class SummarizerProtocol(Protocol):
         ...
 
 
+class ModelUnavailableError(Exception):
+    """Raised when the Groq model is permanently unavailable (e.g. 404 model_not_found).
+
+    Retrying is wasteful; the summarizer should fall back to local NLP instead.
+    """
+
+
 # --- Fallback Strategy ---
 
 @dataclass(frozen=True)
@@ -156,11 +163,33 @@ class GroqSummarizer:
                 error_msg += " (Rate limited)"
             elif response.status_code == 401:
                 error_msg += " (Invalid API key)"
+            # A 404 model_not_found is permanent for this model/account — no
+            # amount of retrying will make it succeed. Signal the resilient
+            # summarizer to fall back to local NLP for the rest of this run.
+            if response.status_code == 404 and "model_not_found" in response.text:
+                raise ModelUnavailableError(error_msg, response=response)
             raise requests.HTTPError(error_msg, response=response)
 
     def summarize(self, title: str, content: str) -> SummarizeResult:
         """Summarize with Groq API, with full resilience."""
         start_time = time.time()
+
+        # Check circuit breaker first: if OPEN there is no point in waiting on
+        # the rate limiter just to fall back immediately.
+        from backend.circuit_breaker import CircuitState
+        if self.circuit_breaker.state == CircuitState.OPEN:
+            duration_ms = (time.time() - start_time) * 1000
+            logger.warning(
+                "Circuit breaker OPEN, falling back to local NLP",
+                extra={"extra_fields": {
+                    "event": "groq_circuit_open",
+                    "model": self.model,
+                    "duration_ms": duration_ms,
+                }},
+            )
+            raise CircuitOpenError(
+                f"Circuit breaker '{self.circuit_breaker.name}' is OPEN."
+            )
 
         # Acquire rate limit slot
         try:
@@ -264,6 +293,9 @@ class ResilientSummarizer:
         self.groq_config = cfg
         self.local_summarizer = local_summarizer or LocalNLPSummarizer()
         self.groq_summarizer_factory = groq_summarizer_factory or GroqSummarizer
+        # Once Groq proves permanently unavailable (e.g. model_not_found) in
+        # this run, skip it for every remaining article instead of retrying.
+        self._groq_permanently_unavailable: bool = False
 
     def summarize(self, title: str, content: str) -> SummarizeResult:
         """
@@ -277,6 +309,10 @@ class ResilientSummarizer:
             )
             return self.local_summarizer.summarize(title, content)
 
+        # Groq already proven unavailable in this run? Skip straight to local.
+        if self._groq_permanently_unavailable:
+            return self._fallback("circuit_open", title, content)
+
         # Try Groq
         groq_summarizer = self.groq_summarizer_factory(
             self.groq_api_key, self.model, self.groq_config
@@ -284,6 +320,20 @@ class ResilientSummarizer:
 
         try:
             return groq_summarizer.summarize(title, content)
+        except ModelUnavailableError as e:
+            # Mark Groq unavailable for the rest of this run so every
+            # remaining article goes straight to local NLP (no more 404s,
+            # no rate-limiter blocking, no circuit-breaker thrashing).
+            self._groq_permanently_unavailable = True
+            logger.warning(
+                f"Groq model unavailable ({self.model}), switching to local NLP for remaining articles",
+                extra={"extra_fields": {
+                    "event": "groq_model_unavailable",
+                    "model": self.model,
+                    "error": str(e),
+                }},
+            )
+            return self._fallback("http_error", title, content)
         except TimeoutError:
             return self._fallback("rate_limit_timeout", title, content)
         except CircuitOpenError:
