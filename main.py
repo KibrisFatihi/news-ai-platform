@@ -107,7 +107,7 @@ def run_pipeline(
     summarization_start = time.time()
     results: List[Dict] = []
     now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    max_workers = min(len(clusters), 3)
+    max_workers = min(len(clusters), 2)
 
     def _summarize_single_cluster(cluster: Dict) -> Dict:
         main_art = cluster["main_article"]

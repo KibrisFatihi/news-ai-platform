@@ -4,6 +4,7 @@ Consolidates Groq API calls with rate limiting, circuit breaker, model rotation,
 """
 from __future__ import annotations
 
+import random
 import re
 import threading
 import time
@@ -85,7 +86,7 @@ class ModelRotator:
         self._lock = threading.RLock()
         self._cooldowns: dict[str, float] = {}
 
-    def mark_rate_limited(self, model: str, cooldown_seconds: float = 2.5) -> None:
+    def mark_rate_limited(self, model: str, cooldown_seconds: float = 3.5) -> None:
         """Put a rate-limited model on temporary cooldown so workers skip it."""
         with self._lock:
             self._cooldowns[model] = time.time() + cooldown_seconds
@@ -208,8 +209,8 @@ class ResilientSummarizer:
         for _round in range(2):
             if self._rotator:
                 wait = self._rotator.min_wait_seconds()
-                if 0 < wait <= 3.5:
-                    time.sleep(wait + 0.05)
+                if 0 < wait <= 4.5:
+                    time.sleep(wait + random.uniform(0.1, 0.5))
 
             for attempt in range(len(self._rotation_models)):
                 model = self._rotator.current_model() if self._rotator else self._rotation_models[0]
@@ -232,7 +233,7 @@ class ResilientSummarizer:
                         extra={"extra_fields": {"event": "groq_rate_limit_failover", "model": model, "attempt": attempt + 1}},
                     )
                     if self._rotator:
-                        self._rotator.mark_rate_limited(model, 2.5)
+                        self._rotator.mark_rate_limited(model, 3.5)
                         self._rotator.next_model()
                     continue
 
@@ -263,7 +264,7 @@ class ResilientSummarizer:
                         extra={"extra_fields": {"event": "groq_429_http", "model": model}},
                     )
                     if self._rotator:
-                        self._rotator.mark_rate_limited(model, 2.5)
+                        self._rotator.mark_rate_limited(model, 3.5)
                         self._rotator.next_model()
                     continue
                 except requests.Timeout:
@@ -299,7 +300,7 @@ class ResilientSummarizer:
         """Low-level Groq HTTP call with circuit breaker and logging."""
         start_time = time.time()
 
-        def _do_request() -> str:
+        def _do_request() -> Optional[str]:
             payload: dict[str, Any] = {
                 "model": model,
                 "messages": [
@@ -339,7 +340,7 @@ class ResilientSummarizer:
                     raise _EmptySummaryError(f"Groq model {model} returned empty content")
                 return content
             elif response.status_code == 429:
-                raise _RateLimitError(f"Rate limited: {response.text}")
+                return None  # Circuit breaker'a failure yazdırma
             elif response.status_code == 401:
                 raise requests.HTTPError(f"Invalid API key: {response.text}", response=response)
             elif response.status_code == 404 and "model_not_found" in response.text:
@@ -348,6 +349,9 @@ class ResilientSummarizer:
                 raise requests.HTTPError(f"Groq API {response.status_code}: {response.text}", response=response)
 
         raw_content = circuit_breaker.call(_do_request)
+        if raw_content is None:
+            raise _RateLimitError("Rate limited (HTTP 429)")
+
         duration_ms = (time.time() - start_time) * 1000
         log_groq_call(logger, model, success=True, duration_ms=duration_ms)
         return raw_content
