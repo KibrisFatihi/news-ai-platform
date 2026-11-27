@@ -182,9 +182,10 @@ class GroqConfig:
     # across these models and a 429 on one model fails over to the next.
     model_rotation_enabled: bool = True
     model_rotation: list[str] = field(default_factory=lambda: [
+        "qwen/qwen3.8-27b",
         "openai/gpt-oss-120b",
         "openai/gpt-oss-20b",
-        "qwen/qwen3.8-27b",
+        
     ])
 
 
