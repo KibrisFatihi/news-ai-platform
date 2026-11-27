@@ -284,7 +284,7 @@ class ResilientSummarizer:
     def summarize_batch(self, items: List[Tuple[str, str]]) -> List[SummarizeResult]:
         """
         Summarize a batch of (title, content) tuples in a SINGLE Groq API call.
-        Falls back to individual summarize() if batch parsing fails.
+        Retries briefly across models on 429 before falling back.
         """
         if not items:
             return []
@@ -293,80 +293,84 @@ class ResilientSummarizer:
         if not self.groq_api_key or self._groq_permanently_unavailable:
             return [self.local_summarizer.summarize(t, c) for t, c in items]
 
-        # Build compact batch prompt
         blocks = []
         for idx, (title, content) in enumerate(items):
-            short_content = _truncate_content(content, max_chars=600)
+            short_content = _truncate_content(content, max_chars=550)
             blocks.append(f"[{idx}] Başlık: {title}\nİçerik: {short_content}")
         user_prompt = "\n\n---\n\n".join(blocks)
 
-        for attempt in range(len(self._rotation_models)):
-            model = self._rotator.current_model() if self._rotator else self._rotation_models[0]
+        max_rounds = 3  # Tüm modeller doluysa kısa bekleyip 3 tura kadar dene
+        for round_idx in range(max_rounds):
+            for _ in range(len(self._rotation_models)):
+                model = self._rotator.current_model() if self._rotator else self._rotation_models[0]
 
-            if self._rotator and not self._rotator.is_available(model):
-                self._rotator.next_model()
-                continue
-
-            rate_limiter = get_groq_rate_limiter(model)
-            circuit_breaker = get_circuit_breaker(f"groq_api:{model}", groq_config=self.groq_config)
-
-            if circuit_breaker.state == "open" or not rate_limiter.acquire(count=1, blocking=False):
-                if self._rotator:
-                    self._rotator.mark_rate_limited(model, 10.0)
+                if self._rotator and not self._rotator.is_available(model):
                     self._rotator.next_model()
-                continue
+                    continue
 
-            try:
-                raw_text = self._call_groq_api(
-                    system_prompt=self._batch_system_prompt,
-                    user_prompt=user_prompt,
-                    model=model,
-                    circuit_breaker=circuit_breaker,
-                    max_tokens=max(self.groq_config.max_tokens * len(items), 450),
-                    json_mode=True,
-                )
-                cleaned = _clean_groq_summary(raw_text)
-                parsed = json.loads(cleaned)
-                summary_map = {
-                    int(entry["id"]): _clean_groq_summary(entry.get("summary", ""))
-                    for entry in parsed.get("summaries", [])
-                    if "id" in entry
-                }
+                rate_limiter = get_groq_rate_limiter(model)
+                circuit_breaker = get_circuit_breaker(f"groq_api:{model}", groq_config=self.groq_config)
 
-                results: List[SummarizeResult] = []
-                for idx, (title, content) in enumerate(items):
-                    s_text = summary_map.get(idx, "")
-                    if s_text:
-                        results.append(
-                            SummarizeResult(
-                                summary=s_text,
-                                engine=f"Groq ({model})",
-                                success=True,
-                                model=model,
-                            )
-                        )
-                    else:
-                        results.append(self.local_summarizer.summarize(title, content))
-
-                if self._rotator:
-                    self._rotator.next_model()
-                return results
-
-            except requests.HTTPError as e:
-                if e.response is not None and e.response.status_code == 429:
-                    logger.warning(f"Groq 429 on model {model} (Batch HTTP)")
+                if circuit_breaker.state == "open" or not rate_limiter.acquire(count=1, blocking=False):
                     if self._rotator:
-                        self._rotator.mark_rate_limited(model, 5.0)
+                        self._rotator.mark_rate_limited(model, 1.5)
                         self._rotator.next_model()
                     continue
-                break
-            except Exception as e:
-                logger.warning(f"Batch summarize failed on {model} ({e}), falling back to single calls")
-                break
 
-        # Fallback: process items individually
-        return [self.summarize(t, c) for t, c in items]
+                try:
+                    raw_text = self._call_groq_api(
+                        system_prompt=self._batch_system_prompt,
+                        user_prompt=user_prompt,
+                        model=model,
+                        circuit_breaker=circuit_breaker,
+                        max_tokens=max(self.groq_config.max_tokens * len(items), 450),
+                        json_mode=True,
+                    )
+                    cleaned = _clean_groq_summary(raw_text)
+                    parsed = json.loads(cleaned)
+                    summary_map = {
+                        int(entry["id"]): _clean_groq_summary(entry.get("summary", ""))
+                        for entry in parsed.get("summaries", [])
+                        if "id" in entry
+                    }
 
+                    results: List[SummarizeResult] = []
+                    for idx, (title, content) in enumerate(items):
+                        s_text = summary_map.get(idx, "")
+                        if s_text:
+                            results.append(
+                                SummarizeResult(
+                                    summary=s_text,
+                                    engine=f"Groq ({model})",
+                                    success=True,
+                                    model=model,
+                                )
+                            )
+                        else:
+                            results.append(self.local_summarizer.summarize(title, content))
+
+                    if self._rotator:
+                        self._rotator.next_model()
+                    return results
+
+                except requests.HTTPError as e:
+                    if e.response is not None and e.response.status_code == 429:
+                        logger.warning(f"Groq 429 on model {model} (Batch HTTP)")
+                        if self._rotator:
+                            self._rotator.mark_rate_limited(model, 1.5)
+                            self._rotator.next_model()
+                        continue
+                    break
+                except Exception as e:
+                    logger.warning(f"Batch summarize failed on {model} ({e}), falling back to single calls")
+                    break
+
+            # 3 model de bu turda doluysa 1.5 saniye nefes al, TPM penceresi açılsın
+            if round_idx < max_rounds - 1:
+                time.sleep(1.5)
+
+        # Son çare: yerel NLP
+        return [self.local_summarizer.summarize(t, c) for t, c in items]
     def _call_groq_api(
         self,
         system_prompt: str,
