@@ -24,7 +24,7 @@ from config import get_config
 
 logger = get_logger("pipeline")
 
-BATCH_SIZE = 3  # Tek Groq isteğinde özetlenecek makale sayısı (79 haber -> ~16 istek)
+BATCH_SIZE = 2  # Tek Groq isteğinde özetlenecek makale sayısı (79 haber -> ~16 istek)
 
 
 def _chunk_list(items: List, chunk_size: int) -> List[List]:
