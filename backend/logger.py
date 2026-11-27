@@ -119,17 +119,27 @@ def setup_logging(
     root_logger.handlers.clear()
 
     # Console handler with colored formatting
-    # On Windows, ensure UTF-8 encoding and immediate (unbuffered) output so
-    # pipeline progress appears in the console in real time instead of being
-    # held in Python's stdout block buffer.
-    if sys.platform == "win32":
+    # Ensure UTF-8 encoding and immediate (unbuffered) output on every platform.
+    # When stdout is a terminal (local dev) Python usually line-buffers; when it
+    # is a pipe or captured stream (Render, CI) Python uses full block buffering
+    # (~8 KiB) and INFO log lines would not appear until the buffer fills or the
+    # process exits. write_through + line_buffering makes every log line show up
+    # in real time on both.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", write_through=True, line_buffering=True)
+    except (AttributeError, OSError, ValueError):
+        import io
+
         try:
-            # Python 3.7+: reconfigure stdout to use UTF-8, write-through
-            sys.stdout.reconfigure(encoding="utf-8", write_through=True, line_buffering=True)
-        except AttributeError:
-            # Python < 3.7: wrap stdout with UTF-8 encoder
-            import io
-            sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace", write_through=True)
+            sys.stdout = io.TextIOWrapper(
+                sys.stdout.buffer,
+                encoding="utf-8",
+                errors="replace",
+                write_through=True,
+            )
+        except (AttributeError, OSError, ValueError):
+            # stdout cannot be wrapped (e.g. replaced by a test double); leave as-is
+            pass
 
     console_handler = logging.StreamHandler(sys.stdout)
     if use_json:

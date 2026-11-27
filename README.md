@@ -54,6 +54,21 @@ pytest -q
 
 ---
 
+## Render'de Çalıştırma
+
+Render (Linux) stdout'u bir TTY değil, bu yüzden Python konsol çıktısını
+blok-bufferlar ve loglar anında görünmez. Aşağıdaki gibi başlatın:
+
+```bash
+PYTHONUNBUFFERED=1 LOG_FILE=logs/news_ai.log LOG_JSON=true python server.py
+```
+
+- `PYTHONUNBUFFERED=1` (veya `python -u`): konsol logları anındaRender akışına düşer.
+- `LOG_FILE=logs/news_ai.log`: yapılandırılmış log dosyası yedeği (`logs/` ve `*.log` zaten `.gitignore` içinde).
+- `LOG_JSON=true`: JSON formatlı log (log aglorama sistemleri için).
+
+Render ortam değişkenleri olarak `LOG_LEVEL=INFO`, `PORT`, `DISABLE_SCHEDULER=1` (isteğe bağlı, arka plan 30 dakikalık yenilemeyi kapatır) ayarlayabilirsiniz.
+
 ## API Uç Noktaları
 
 | Metot | Yol | Açıklama |

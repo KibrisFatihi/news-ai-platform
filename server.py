@@ -29,15 +29,9 @@ import urllib.parse
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-# Ensure UTF-8 encoding on Windows for emoji support in logs
-if sys.platform == "win32":
-    try:
-        sys.stdout.reconfigure(encoding="utf-8")
-        sys.stderr.reconfigure(encoding="utf-8")
-    except AttributeError:
-        import io
-        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace", write_through=True)
-        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace", write_through=True)
+# Stdout is configured with UTF-8 + write-through in backend.logger.setup_logging()
+# (called below), so log lines are not block-buffered when stdout is a pipe
+# (Render, CI) instead of a TTY (local terminal).
 
 from backend.handlers import (
     handle_get_health,
