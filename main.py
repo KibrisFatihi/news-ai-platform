@@ -122,7 +122,7 @@ def run_pipeline(
 
     # Paralel özetleme: max_workers = model sayısı (3) veya daha fazla (5-10)
     # Groq free tier rate limit per model, bu yüzden worker sayısı model sayısına yakın tutulmalı
-    max_workers = min(len(clusters), 3)
+    max_workers = min(len(clusters), 2)
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = [executor.submit(_summarize_cluster, c) for c in clusters]
         for future in as_completed(futures):
