@@ -12,10 +12,8 @@ from __future__ import annotations
 import datetime
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any,Dict, List, Optional
-from fastapi import BackgroundTasks, FastAPI
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
+from typing import Dict, List, Optional
+
 
 from backend.crawler import fetch_news
 from backend.logger import get_logger, log_pipeline_complete, log_pipeline_start, setup_logging
@@ -159,26 +157,3 @@ def run_pipeline(
 if __name__ == "__main__":
     run_pipeline()
 
-app = FastAPI(title="AI News Aggregator API")
-
-
-@app.get("/")
-def health_check():
-    return {"status": "online", "service": "news-ai-platform"}
-
-
-@app.get("/news")
-def get_news():
-    repo = get_news_repository()
-    # Repository metoduna göre okuma yapar (load veya get_all vb.)
-    return repo.load() if hasattr(repo, "load") else {"message": "Pipeline hazır"}
-
-
-@app.post("/run-pipeline")
-def trigger_pipeline(background_tasks: BackgroundTasks):
-    background_tasks.add_task(run_pipeline)
-    return {"status": "Pipeline arka planda başlatıldı"}
-
-
-if __name__ == "__main__":
-    run_pipeline()    
