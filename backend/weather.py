@@ -35,7 +35,7 @@ TURKEY_CITIES: List[Dict[str, Any]] = [
     {"name": "Kayseri", "lat": 38.7312, "lon": 35.4787, "featured": False},
     {"name": "Diyarbakır", "lat": 37.9144, "lon": 40.2306, "featured": False},
     {"name": "Erzurum", "lat": 39.9000, "lon": 41.2700, "featured": False},
-    {"name": "Muğla", "lat": 37.2153, "lon": 28.3636, "featured": False},
+    {"name": "Muğla", "lat": 37.2153, "lon": 28.3636, "featured": True},
 ]
 
 _WMO_MAP: Dict[int, tuple[str, str]] = {
