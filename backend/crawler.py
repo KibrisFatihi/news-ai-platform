@@ -20,12 +20,6 @@ from config import RSSFeedConfig, get_config
 
 logger = get_logger("crawler")
 
-BROWSER_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/124.0.0.0 Safari/537.36"
-)
-
 
 def clean_html(raw_html: str) -> str:
     """Removes HTML tags, decodes HTML entities, and cleans up whitespace."""
@@ -38,11 +32,68 @@ def clean_html(raw_html: str) -> str:
     return clean_text
 
 
+_IMG_SRC_RE = re.compile(r'<img[^>]+src=["\']([^"\']+)["\']', re.IGNORECASE)
+_IMAGE_EXT_RE = re.compile(r'\.(jpe?g|png|webp|avif)(\?|$)', re.IGNORECASE)
+
+
+def _is_valid_image_url(url: Optional[str]) -> bool:
+    """Return True if url is an http(s) image URL and not an obvious tracking pixel."""
+    if not url or not isinstance(url, str):
+        return False
+    url = url.strip()
+    if not url.startswith(("http://", "https://")):
+        return False
+    lowered = url.lower()
+    if any(bad in lowered for bad in ("1x1", "pixel", "spacer", "blank.gif", "feedburner")):
+        return False
+    return True
+
+
+def extract_image_url(entry: object) -> Optional[str]:
+    """Extract the best available image URL from a feedparser entry."""
+    for media in getattr(entry, "media_content", None) or []:
+        url = media.get("url") if isinstance(media, dict) else getattr(media, "url", None)
+        medium = (media.get("medium") if isinstance(media, dict) else getattr(media, "medium", "")) or ""
+        mime = (media.get("type") if isinstance(media, dict) else getattr(media, "type", "")) or ""
+        if _is_valid_image_url(url) and (not medium or medium == "image" or mime.startswith("image/")):
+            return url.strip()
+
+    for thumb in getattr(entry, "media_thumbnail", None) or []:
+        url = thumb.get("url") if isinstance(thumb, dict) else getattr(thumb, "url", None)
+        if _is_valid_image_url(url):
+            return url.strip()
+
+    for enc in getattr(entry, "enclosures", None) or []:
+        url = (enc.get("href") or enc.get("url")) if isinstance(enc, dict) else (getattr(enc, "href", None) or getattr(enc, "url", None))
+        mime = (enc.get("type") if isinstance(enc, dict) else getattr(enc, "type", "")) or ""
+        if _is_valid_image_url(url) and (mime.startswith("image/") or _IMAGE_EXT_RE.search(url or "")):
+            return url.strip()
+
+    raw_blocks = [
+        getattr(entry, "summary", "") or "",
+        getattr(entry, "description", "") or "",
+    ]
+    for content_item in getattr(entry, "content", None) or []:
+        val = content_item.get("value") if isinstance(content_item, dict) else getattr(content_item, "value", "")
+        if val:
+            raw_blocks.append(val)
+
+    for block in raw_blocks:
+        if not isinstance(block, str) or not block:
+            continue
+        for match in _IMG_SRC_RE.finditer(block):
+            if _is_valid_image_url(match.group(1)):
+                return match.group(1).strip()
+
+    return None
+
+
 def _fetch_single_feed(
     source_name: str,
     feed_url: str,
     max_items: int,
-    timeout: int
+    timeout: int,
+    user_agent: str
 ) -> Tuple[str, List[dict[str, str]]]:
     """Fetch and parse a single RSS feed with timeout and browser headers."""
     source_start = time.time()
@@ -52,7 +103,7 @@ def _fetch_single_feed(
         req = urllib.request.Request(
             feed_url,
             headers={
-                "User-Agent": BROWSER_USER_AGENT,
+                "User-Agent": user_agent,
                 "Accept": "application/rss+xml, application/xml, text/xml, */*;q=0.8",
             },
         )
@@ -80,6 +131,7 @@ def _fetch_single_feed(
                     "content": content,
                     "link": link,
                     "published": published,
+                    "image_url": extract_image_url(entry),
                 })
                 count += 1
 
@@ -138,7 +190,7 @@ def fetch_news(
     max_workers = min(12, max(1, len(cfg.feeds)))
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
-            executor.submit(_fetch_single_feed, source_name, feed_url, max_items, cfg.request_timeout): source_name
+            executor.submit(_fetch_single_feed, source_name, feed_url, max_items, cfg.request_timeout, cfg.user_agent): source_name
             for source_name, feed_url in cfg.feeds.items()
         }
         for future in as_completed(futures):

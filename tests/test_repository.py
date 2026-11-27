@@ -166,7 +166,8 @@ class TestNewsRepository:
         repo.save([{"title": "Test"}])
         mtime = repo.get_last_modified()
         assert mtime is not None
-        assert mtime <= time.time()
+        # Allow small tolerance for filesystem timestamp precision
+        assert mtime <= time.time() + 0.01
 
     def test_cleanup(self, tmp_path):
         """Test cleanup removes file."""

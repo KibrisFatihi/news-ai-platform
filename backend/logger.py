@@ -119,11 +119,13 @@ def setup_logging(
     root_logger.handlers.clear()
 
     # Console handler with colored formatting
-    # On Windows, ensure UTF-8 encoding to support emojis and special chars
+    # On Windows, ensure UTF-8 encoding and immediate (unbuffered) output so
+    # pipeline progress appears in the console in real time instead of being
+    # held in Python's stdout block buffer.
     if sys.platform == "win32":
         try:
-            # Python 3.7+: reconfigure stdout to use UTF-8
-            sys.stdout.reconfigure(encoding="utf-8")
+            # Python 3.7+: reconfigure stdout to use UTF-8, write-through
+            sys.stdout.reconfigure(encoding="utf-8", write_through=True, line_buffering=True)
         except AttributeError:
             # Python < 3.7: wrap stdout with UTF-8 encoder
             import io

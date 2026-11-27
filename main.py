@@ -109,6 +109,7 @@ def run_pipeline(
             "summary": ai_result.summary,
             "original_content": main_art["content"],
             "link": main_art["link"],
+            "image_url": main_art.get("image_url"),
             "ai_engine": ai_result.engine,
             "ai_model": ai_result.model,
             "published": main_art.get("published", "Yeni"),

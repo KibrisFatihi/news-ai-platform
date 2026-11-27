@@ -9,6 +9,7 @@ import pytest
 
 from backend.crawler import clean_html, fetch_news
 from backend.repository import get_news_repository, reset_news_repository
+from config import RSSFeedConfig
 
 
 class TestCleanHtml:
@@ -54,7 +55,7 @@ class TestFetchNews:
     """Tests for fetch_news function."""
 
     @patch("backend.crawler.feedparser.parse")
-    def test_fetch_news_success(self, mock_parse, sample_articles):
+    def test_fetch_news_success(self, mock_parse):
         """Test successful news fetching from RSS."""
         # Mock feedparser response
         mock_feed = MagicMock()
@@ -74,7 +75,15 @@ class TestFetchNews:
         ]
         mock_parse.return_value = mock_feed
 
-        articles = fetch_news(max_per_source=2)
+        # Use a mock config with only 4 sources
+        mock_rss_config = RSSFeedConfig(feeds={
+            "BBC Türkçe": "https://feeds.bbci.co.uk/turkce/rss.xml",
+            "TRT Haber": "https://www.trthaber.com/manset_articles.rss",
+            "NTV": "https://www.ntv.com.tr/teknoloji.rss",
+            "Webrazzi": "https://webrazzi.com/feed/",
+        }, max_per_source=3, request_timeout=10, user_agent="TestAgent")
+
+        articles = fetch_news(max_per_source=2, rss_config=mock_rss_config)
 
         # 4 sources * 2 per source = 8 articles
         assert len(articles) == 8
@@ -94,7 +103,14 @@ class TestFetchNews:
         ]
         mock_parse.return_value = mock_feed
 
-        articles = fetch_news(max_per_source=2)
+        mock_rss_config = RSSFeedConfig(feeds={
+            "BBC Türkçe": "https://feeds.bbci.co.uk/turkce/rss.xml",
+            "TRT Haber": "https://www.trthaber.com/manset_articles.rss",
+            "NTV": "https://www.ntv.com.tr/teknoloji.rss",
+            "Webrazzi": "https://webrazzi.com/feed/",
+        }, max_per_source=3, request_timeout=10, user_agent="TestAgent")
+
+        articles = fetch_news(max_per_source=2, rss_config=mock_rss_config)
 
         # Should only get 2 per source, and 4 sources total = 8 max
         # But since we mock all sources to return same feed, we get 2 per source
@@ -177,7 +193,15 @@ class TestFetchNews:
             ]
             mock_parse.return_value = mock_feed
 
-            articles = fetch_news(max_per_source=1)
+            # Use a mock config with only 4 sources
+            mock_rss_config = RSSFeedConfig(feeds={
+                "BBC Türkçe": "https://feeds.bbci.co.uk/turkce/rss.xml",
+                "TRT Haber": "https://www.trthaber.com/manset_articles.rss",
+                "NTV": "https://www.ntv.com.tr/teknoloji.rss",
+                "Webrazzi": "https://webrazzi.com/feed/",
+            }, max_per_source=3, request_timeout=10, user_agent="TestAgent")
+
+            articles = fetch_news(max_per_source=1, rss_config=mock_rss_config)
 
             # 4 sources * 1 per source = 4 articles
             assert len(articles) == 4

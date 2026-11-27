@@ -22,20 +22,78 @@ class RSSFeedConfig:
         "NTV - Ekonomi": "https://www.ntv.com.tr/ekonomi.rss",
         "NTV - Teknoloji": "https://www.ntv.com.tr/teknoloji.rss",
         "NTV Spor": "https://www.ntvspor.net/rss/anasayfa",
-        "Anadolu Ajansı": "https://www.aa.com.tr/tr/rss/default?cat=guncel",
         "Habertürk": "https://www.haberturk.com/rss/kategori/gundem.xml",
         "Euronews Türkçe": "https://tr.euronews.com/rss?format=mrss&level=theme&name=news",
         "DW Türkçe": "https://rss.dw.com/xml/rss-tur-all",
         "Webrazzi": "https://webrazzi.com/feed/",
         "ShiftDelete.Net": "https://shiftdelete.net/feed",
         "DonanımHaber": "https://www.donanimhaber.com/rss/tum/",
-        "Evrim Ağacı": "https://evrimagaci.org/rss.xml",
+        "Sözcü": "https://www.sozcu.com.tr/feeds-rss-category-gundem",
+        "Cumhuriyet": "https://www.cumhuriyet.com.tr/rss/son_dakika.xml",
         "Bloomberg HT": "https://www.bloomberght.com/rss",
         "Ekonomim": "https://www.ekonomim.com/rss",
     })
-    max_per_source: int = 6
+    max_per_source: int = int(os.getenv("MAX_PER_SOURCE", "5"))
     request_timeout: int = 10
     user_agent: str = "NewsAIPlatform/2.0 (+https://github.com/news-ai-platform)"
+
+
+# Pre-compile category keyword patterns at module load (not lazy)
+# This avoids first-request latency and ensures patterns are ready.
+_CATEGORY_PATTERNS: dict[str, list[Pattern]] = {}
+for _cat, _kws in {
+    "Savunma & Teknoloji": [
+        "kızılelma", "envanter", "siber", "roket", "siha", "iha", "uydu",
+        "drone", "füze", "radar", "savunma", "askeri", "mühimmat",
+        "yapay zeka", "teknoloji", "algoritma", "model", "yazılım",
+        "veri", "bulut", "siber güvenlik", "şifreleme", "blockchain",
+        "işlemci", "ekran kartı", "apple", "google", "microsoft", "nvidia",
+        "openai", "telefon", "güncelleme", "oyun", "elektrikli araç",
+        "startup", "girişim", "uygulama", "donanım", "hacker", "siber saldırı", "veri sızıntısı",
+    ],
+    "Bilim": [
+        "bilim", "uzay", "nasa", "evrim", "deney", "araştırma",
+        "kuantum", "biyoloji", "fizik", "gezegen", "teleskop",
+        "iklim", "keşif", "fosil", "genetik", "molekül", "astronomi",
+    ],
+    "Ekonomi": [
+        "dolar", "enflasyon", "faiz", "para", "fon", "banka", "piyasa", "borsa",
+        "maaş", "zam", "ekonomi", "bütçe", "tüfe", "ithalat", "ihracat", "cari açık",
+        "tl", "kur", "merkez bankası", "faiz kararı", "enflasyon verisi",
+        "gsyh", "işsizlik", "asgari ücret", "emekli", "sgk", "vergi",
+        "altın", "petrol", "kredi", "yatırım", "hisse",
+        "üst düzey", "genel müdür", "yönetim kurulu", "ceo",
+    ],
+    "Politika & Gündem": [
+        "parti", "seçim", "belediye", "hükümet", "meclis", "başkan", "ak parti",
+        "chp", "tbmm", "eylem", "miting", "oy", "sandık", "yargı", "anayasa",
+        "milletvekili", "kanun", "teklif", "yasa", "genel kurul",
+        "başbakan", "bakan", "kabine", "cumhurbaşkanı", "mahkeme", "soruşturma",
+    ],
+    "Dünya": [
+        "uluslararası", "divan", "myanmar", "israil", "gazze", "abd", "rusya",
+        "ukrayna", "ab", "avrupa", "soykırım", "nato", "bm", "barış", "savaş",
+        "çin", "hindistan", "japonya", "kore", "orta doğu", "afrika",
+        "brics", "g20", "bm güvenlik konseyi", "antlaşma", "diplomasi",
+    ],
+    "Spor": [
+        "futbol", "maç", "gol", "lig", "galatasaray", "fenerbahçe", "beşiktaş",
+        "şampiyon", "transfer", "kupa", "kupası", "milli takım", "süper lig",
+        "trabzonspor", "basketbol", "voleybol", "tenis", "formula 1",
+        "teknik direktör", "derbi", "şampiyonlar ligi", "nba", "euroleague",
+    ],
+}.items():
+    _patterns = []
+    for _kw in _kws:
+        if _kw == "deney":
+            # Avoid matching "deneyim" / "deneyimli" (experience) as science experiment.
+            _pat = r'\bdeney(?!im)\w*\b'
+        elif len(_kw) >= 5 and ' ' not in _kw:
+            _pat = r'\b' + re.escape(_kw) + r'(?:\w*)?\b'
+        else:
+            _pat = r'\b' + re.escape(_kw) + r'\b'
+        _patterns.append(re.compile(_pat, re.IGNORECASE))
+    _CATEGORY_PATTERNS[_cat] = _patterns
 
 
 @dataclass(frozen=True)
@@ -60,7 +118,7 @@ class NLPConfig:
             "veri", "bulut", "siber güvenlik", "şifreleme", "blockchain",
             "işlemci", "ekran kartı", "apple", "google", "microsoft", "nvidia",
             "openai", "telefon", "güncelleme", "oyun", "elektrikli araç",
-            "startup", "girişim", "uygulama", "donanım",
+            "startup", "girişim", "uygulama", "donanım", "hacker", "siber saldırı", "veri sızıntısı",
         ],
         "Bilim": [
             "bilim", "uzay", "nasa", "evrim", "deney", "araştırma",
@@ -73,6 +131,7 @@ class NLPConfig:
             "tl", "kur", "merkez bankası", "faiz kararı", "enflasyon verisi",
             "gsyh", "işsizlik", "asgari ücret", "emekli", "sgk", "vergi",
             "altın", "petrol", "kredi", "yatırım", "hisse",
+            "üst düzey", "genel müdür", "yönetim kurulu", "ceo",
         ],
         "Politika & Gündem": [
             "parti", "seçim", "belediye", "hükümet", "meclis", "başkan", "ak parti",
@@ -94,35 +153,22 @@ class NLPConfig:
         ],
     })
 
-    # Pre-compiled regex patterns for each category (built on first access)
-    _compiled_patterns: dict[str, list[Pattern]] = field(default_factory=dict, init=False, repr=False)
+    # Pre-compiled regex patterns for each category (built at module load)
     default_category: str = "Genel Gündem"
 
     def get_compiled_patterns(self) -> dict[str, list[Pattern]]:
-        """Get or build pre-compiled regex patterns for category keywords."""
-        if not self._compiled_patterns:
-            compiled = {}
-            for category, keywords in self.category_keywords.items():
-                patterns = []
-                for kw in keywords:
-                    if len(kw) >= 5 and ' ' not in kw:
-                        pattern = r'\b' + re.escape(kw) + r'(?:\w*)?\b'
-                    else:
-                        pattern = r'\b' + re.escape(kw) + r'\b'
-                    patterns.append(re.compile(pattern, re.IGNORECASE))
-                compiled[category] = patterns
-            object.__setattr__(self, "_compiled_patterns", compiled)
-        return self._compiled_patterns
+        """Get pre-compiled regex patterns for category keywords."""
+        return _CATEGORY_PATTERNS
 
 
 @dataclass(frozen=True)
 class GroqConfig:
     """Groq API configuration."""
     api_url: str = "https://api.groq.com/openai/v1/chat/completions"
-    default_model: str = "llama-3.3-70b-versatile"
-    fast_model: str = "llama-3.1-8b-instant"
+    default_model: str = "qwen/qwen3.8-27b"
+    fast_model: str = "qwen/qwen3.8-27b"
     temperature: float = 0.2
-    max_tokens: int = 180
+    max_tokens: int = 512
     request_timeout: int = 8
     # Rate limits for free tier
     rate_limit_rpm: int = 30
@@ -130,6 +176,16 @@ class GroqConfig:
     # Circuit breaker
     circuit_failure_threshold: int = 5
     circuit_timeout_seconds: int = 60
+    # Model rotation - Grok rate limits are per-model, so rotating across
+    # models multiplies effective free-tier capacity (approx. N models x limits).
+    # When enabled and no explicit model is chosen, articles are round-robined
+    # across these models and a 429 on one model fails over to the next.
+    model_rotation_enabled: bool = True
+    model_rotation: list[str] = field(default_factory=lambda: [
+        "openai/gpt-oss-120b",
+        "openai/gpt-oss-20b",
+        "qwen/qwen3.8-27b",
+    ])
 
 
 @dataclass(frozen=True)
@@ -154,6 +210,10 @@ class ServerConfig:
     # Rate limiting for /api/refresh
     refresh_rate_limit_window: int = 60
     refresh_rate_limit_max: int = 5
+    # Background scheduler
+    scheduler_interval_seconds: int = 30 * 60  # 30 minutes
+    # Pipeline timeout
+    pipeline_timeout_seconds: int = 120
 
 
 @dataclass(frozen=True)

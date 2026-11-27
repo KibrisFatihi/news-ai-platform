@@ -10,7 +10,7 @@ from __future__ import annotations
 import math
 import re
 import time
-from collections import Counter
+from collections import Counter, OrderedDict
 from functools import lru_cache
 from typing import List, Optional
 
@@ -18,6 +18,35 @@ from backend.logger import get_logger
 from config import NLPConfig, get_config
 
 logger = get_logger("nlp_engine")
+
+
+# --- Turkish Abbreviation Patterns for Sentence Splitting ---
+# Common Turkish abbreviations that should NOT trigger sentence boundaries
+# (without trailing period - we'll match them with optional period)
+_TURKISH_ABBREVIATIONS = frozenset({
+    "dr", "prof", "av", "doç", "yrd", "vb", "vd", "veya", "örn", "örnek",
+    "mah", "cad", "sk", "sok", "no", "blv", "şube", "ptt",
+    "kg", "km", "m", "cm", "mm", "ml", "lt", "g", "mg",
+    "am", "pm", "gmt", "utc", "iso", "tcp", "ip", "url", "http", "https",
+    "html", "css", "js", "api", "ui", "ux", "ai", "ml", "dl", "nlp",
+    "usa", "eu", "uk", "un", "nato", "oecd", "gdp", "cpi", "ppi",
+    "abd", "tbm", "tsk", "mgm", "thk", "tyb", "atm", "pos",
+})
+
+# Pattern to match abbreviation + period + space + capital letter
+# We use this to TEMPORARILY protect the period during splitting
+# Format: word boundary + abbreviation + period + whitespace + Turkish capital letter
+# We build a regex that matches each abbreviation individually (fixed width)
+_ABBREVIATION_PATTERNS = [
+    re.compile(rf'\b{re.escape(abbr)}\.(?=\s+[A-ZÇĞİÖŞÜ])', re.IGNORECASE)
+    for abbr in _TURKISH_ABBREVIATIONS
+]
+
+# Also match single capital letter + period + space + capital (e.g., "A. Başkan")
+_SINGLE_LETTER_ABBR_PATTERN = re.compile(r'\b[A-ZÇĞİÖŞÜ]\.(?=\s+[A-ZÇĞİÖŞÜ])')
+
+# Number with decimal pattern (e.g., 14.30, 3.14) - fixed width lookbehind OK
+_NUMBER_DECIMAL_PATTERN = re.compile(r'(?<=\d)\.(?=\d)')
 
 
 # --- Tokenization ---
@@ -107,10 +136,13 @@ def classify_category(
     return result
 
 
-# --- Cosine Similarity with Vector Caching ---
+# --- Cosine Similarity with Vector Caching (LRU) ---
 
-# Cache for tokenized vectors to avoid recomputation
-_vector_cache: dict[str, Counter] = {}
+# Maximum cache size to prevent memory leaks in long-running processes
+_MAX_VECTOR_CACHE_SIZE = 5000
+
+# Cache for tokenized vectors to avoid recomputation (LRU using OrderedDict)
+_vector_cache: OrderedDict[str, Counter] = OrderedDict()
 _vector_cache_lock = None  # Will be initialized on first use
 
 
@@ -123,29 +155,58 @@ def _get_vector_cache_lock():
     return _vector_cache_lock
 
 
-def _get_cache_key(text: str, config_id: int) -> str:
-    """Generate cache key for text + config combination."""
-    return f"{config_id}:{hash(text)}"
+def _get_cache_key(text: str, config_version: int) -> str:
+    """Generate cache key for text + config version.
+
+    Uses config_version instead of id(cfg) to avoid issues when config
+    object is recreated (new id but same content).
+    """
+    return f"{config_version}:{hash(text)}"
+
+
+def _get_config_version(cfg: NLPConfig) -> int:
+    """Generate a stable version identifier for config based on content.
+
+    This avoids the issue where id(cfg) changes when config is recreated
+    but content remains the same.
+    """
+    # Use a hash of the relevant config fields that affect tokenization
+    import hashlib
+    config_str = f"{cfg.similarity_threshold}:{cfg.summary_sentences}:{','.join(sorted(cfg.turkish_stopwords))}"
+    return int(hashlib.md5(config_str.encode()).hexdigest()[:8], 16)
 
 
 def _get_cached_vector(text: str, cfg: NLPConfig) -> Optional[Counter]:
-    """Get cached token frequency vector if available."""
-    cache_key = _get_cache_key(text, id(cfg))
+    """Get cached token frequency vector if available (LRU access)."""
+    cache_key = _get_cache_key(text, _get_config_version(cfg))
     with _get_vector_cache_lock():
-        return _vector_cache.get(cache_key)
+        if cache_key in _vector_cache:
+            # Move to end (most recently used)
+            _vector_cache.move_to_end(cache_key)
+            return _vector_cache[cache_key]
+        return None
 
 
 def _set_cached_vector(text: str, cfg: NLPConfig, vector: Counter) -> None:
-    """Cache token frequency vector."""
-    cache_key = _get_cache_key(text, id(cfg))
+    """Cache token frequency vector with LRU eviction."""
+    cache_key = _get_cache_key(text, _get_config_version(cfg))
     with _get_vector_cache_lock():
-        _vector_cache[cache_key] = vector
+        if cache_key in _vector_cache:
+            # Update and move to end
+            _vector_cache[cache_key] = vector
+            _vector_cache.move_to_end(cache_key)
+        else:
+            # Add new entry
+            _vector_cache[cache_key] = vector
+            # Evict oldest if over limit
+            if len(_vector_cache) > _MAX_VECTOR_CACHE_SIZE:
+                _vector_cache.popitem(last=False)  # Remove oldest (first item)
 
 
 def _tokenize_and_vectorize(text: str, cfg: NLPConfig) -> Counter:
     """
     Tokenize text and return frequency vector.
-    Uses caching to avoid recomputation.
+    Uses LRU caching to avoid recomputation and prevent memory leaks.
     """
     # Check cache first
     cached = _get_cached_vector(text, cfg)
@@ -251,27 +312,14 @@ def cluster_similar_news(
         assigned[i] = True
 
         text_i = article_texts[i]
-        vec_i = _tokenize_and_vectorize(text_i, cfg)
 
         for j in range(i + 1, len(articles)):
             if not assigned[j]:
                 text_j = article_texts[j]
-                vec_j = _tokenize_and_vectorize(text_j, cfg)
 
-                # Compute cosine similarity from cached vectors
-                if vec_i and vec_j:
-                    intersection = set(vec_i.keys()) & set(vec_j.keys())
-                    numerator = sum(vec_i[x] * vec_j[x] for x in intersection)
-                    sum1 = sum(val**2 for val in vec_i.values())
-                    sum2 = sum(val**2 for val in vec_j.values())
-                    denominator = math.sqrt(sum1) * math.sqrt(sum2)
-
-                    if denominator:
-                        sim = float(numerator) / denominator
-                    else:
-                        sim = 0.0
-                else:
-                    sim = 0.0
+                # Use the public compute_cosine_similarity function (DRY)
+                # This uses cached vectors internally
+                sim = compute_cosine_similarity(text_i, text_j, cfg)
 
                 if sim >= sim_threshold:
                     current_cluster["related_articles"].append({
@@ -283,15 +331,18 @@ def cluster_similar_news(
         clusters.append(current_cluster)
 
     # Deduplicate related_sources in each cluster
+    # Keep the article with the highest similarity score per source
     for cluster in clusters:
-        seen_sources = set()
-        unique_related = []
+        source_best: dict[str, tuple[float, dict]] = {}
         for rel in cluster["related_articles"]:
             source = rel["article"].get("source", "")
-            if source not in seen_sources:
-                seen_sources.add(source)
-                unique_related.append(rel)
-        cluster["related_articles"] = unique_related
+            score = rel["similarity_score"]
+            # Keep the highest scoring article per source
+            if source not in source_best or score > source_best[source][0]:
+                source_best[source] = (score, rel)
+
+        # Rebuild list with best per source
+        cluster["related_articles"] = [rel for _, rel in source_best.values()]
 
     duration_ms = (time.time() - start_time) * 1000
     logger.info(
@@ -310,19 +361,89 @@ def cluster_similar_news(
 
 # --- Extractive Summarization ---
 
+# Minimum sentence length to be considered for summary (filters out fragments)
+_MIN_SENTENCE_LENGTH = 25
+
+# Maximum title overlap ratio to exclude a sentence (e.g., first sentence often repeats title)
+_MAX_TITLE_OVERLAP_RATIO = 0.8
+
+# Positional weight decay for early sentences (first sentence gets slightly less weight)
+_POSITIONAL_DECAY = 0.95
+
+
+def _split_sentences(text: str) -> List[str]:
+    """
+    Split text into sentences, handling Turkish abbreviations and decimal numbers.
+
+    Uses a multi-step approach:
+    1. Protect known abbreviations and decimal numbers by temporarily replacing periods
+    2. Split on sentence boundaries
+    3. Restore protected periods
+
+    Args:
+        text: Input text to split
+
+    Returns:
+        List of sentence strings (unfiltered - filtering done at call site)
+    """
+    # Step 1: Protect decimal numbers (e.g., 14.30 -> 14<DECIMAL>30)
+    protected = _NUMBER_DECIMAL_PATTERN.sub('<DECIMAL>', text)
+
+    # Step 2: Protect known abbreviations (e.g., Dr. -> Dr<ABBR>)
+    # Match abbreviation followed by period and space + capital letter
+    def _protect_abbr(match):
+        return match.group(0).replace('.', '<ABBR>')
+
+    # Apply each abbreviation pattern
+    for pattern in _ABBREVIATION_PATTERNS:
+        protected = pattern.sub(_protect_abbr, protected)
+
+    # Also protect single letter abbreviations (A. Başkan -> A<ABBR> Başkan)
+    protected = _SINGLE_LETTER_ABBR_PATTERN.sub(_protect_abbr, protected)
+
+    # Step 3: Split on sentence boundaries (period, exclamation, question + space)
+    sentences = re.split(r'(?<=[.!?]) +', protected.strip())
+
+    # Step 4: Restore protected characters
+    restored = [s.replace('<DECIMAL>', '.').replace('<ABBR>', '.') for s in sentences]
+
+    # Return all sentences (filtering done at call site based on context)
+    return [s.strip() for s in restored if s.strip()]
+
+
+def _sentence_overlaps_title(sentence: str, title: str, cfg: NLPConfig) -> bool:
+    """Check if sentence has high word overlap with title (likely a title repeat)."""
+    if not title:
+        return False
+    sent_tokens = set(tokenize(sentence, cfg))
+    title_tokens = set(tokenize(title, cfg))
+    if not title_tokens:
+        return False
+    overlap = len(sent_tokens & title_tokens) / len(title_tokens)
+    return overlap >= _MAX_TITLE_OVERLAP_RATIO
+
+
 def extractive_summarize(
     text: str,
     num_sentences: Optional[int] = None,
-    nlp_config: Optional[NLPConfig] = None
+    nlp_config: Optional[NLPConfig] = None,
+    title: Optional[str] = None  # Optional title for overlap detection
 ) -> str:
     """
     NLP Extractive Summarization (Sentence Scoring based on Word Frequency).
     Lightweight, fast, and does not require GPU or external API.
 
+    Improvements:
+    - Handles Turkish abbreviations (Dr., Prof., vb., etc.) and decimals (14.30)
+    - Filters out too-short fragments (< 25 chars)
+    - Excludes sentences that are near-duplicates of the title
+    - Applies mild positional decay (earlier sentences slightly downweighted)
+
     Args:
         text: Input text to summarize
         num_sentences: Number of sentences in summary (uses config default if None)
         nlp_config: Optional NLP config override
+        title: Optional article title to detect/avoid title repeats in summary
 
     Returns:
         Extracted summary text
@@ -336,13 +457,21 @@ def extractive_summarize(
     if not text:
         return ""
 
-    # Split text into sentences
-    sentences = re.split(r'(?<=[.!?]) +', text.strip())
+    # Split text into sentences with abbreviation/decimal protection
+    sentences = _split_sentences(text)
     if len(sentences) <= sentences_count:
-        return text.strip()
+        return " ".join(sentences)
+
+    # Filter out too-short fragments (likely split errors) ONLY if we have enough remaining
+    # This preserves short sentences for short texts
+    filtered_sentences = [s for s in sentences if len(s) >= _MIN_SENTENCE_LENGTH]
+    if len(filtered_sentences) >= sentences_count:
+        sentences = filtered_sentences
+    # Otherwise keep all sentences (including short ones) to avoid returning empty
 
     tokens = tokenize(text, cfg)
     if not tokens:
+        # Fallback: return first N characters
         return text[:150] + "..." if len(text) > 150 else text
 
     freq_table = Counter(tokens)
@@ -355,9 +484,21 @@ def extractive_summarize(
         words = tokenize(sentence, cfg)
         if not words:
             continue
-        score = sum(freq_table.get(w, 0) for w in words) / (len(words) + 1)
-        sentence_scores[idx] = score
 
+        # Base frequency score
+        base_score = sum(freq_table.get(w, 0) for w in words) / (len(words) + 1)
+
+        # Positional decay: slightly penalize very early sentences (often title repeats)
+        # First sentence gets POSITIONAL_DECAY, second gets POSITIONAL_DECAY^2, etc.
+        positional_factor = _POSITIONAL_DECAY ** (idx + 1)
+
+        # Title overlap penalty: heavily penalize sentences too similar to title
+        if title and _sentence_overlaps_title(sentence, title, cfg):
+            positional_factor *= 0.1  # Heavy penalty
+
+        sentence_scores[idx] = base_score * positional_factor
+
+    # Select top N sentences by score, then sort by original position
     top_indices = sorted(
         sorted(sentence_scores.keys(), key=lambda i: sentence_scores[i], reverse=True)[:sentences_count]
     )

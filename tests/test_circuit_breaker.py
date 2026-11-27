@@ -1,5 +1,5 @@
 """
-Tests for the Circuit Breaker module.
+Tests for the Circuit Breaker module (simplified implementation).
 """
 from __future__ import annotations
 
@@ -12,7 +12,6 @@ from backend.circuit_breaker import (
     CircuitBreaker,
     CircuitBreakerConfig,
     CircuitOpenError,
-    CircuitState,
     get_all_circuit_breakers,
     get_circuit_breaker,
     reset_all_circuit_breakers,
@@ -26,25 +25,16 @@ class TestCircuitBreakerConfig:
         """Test default configuration values."""
         config = CircuitBreakerConfig()
         assert config.failure_threshold == 5
-        assert config.success_threshold == 2
         assert config.timeout_seconds == 60.0
-        assert config.excluded_exceptions == ()
-        assert config.expected_exceptions == (Exception,)
 
     def test_custom_config(self):
         """Test custom configuration."""
         config = CircuitBreakerConfig(
             failure_threshold=3,
-            success_threshold=1,
             timeout_seconds=30.0,
-            excluded_exceptions=(ValueError,),
-            expected_exceptions=(IOError,)
         )
         assert config.failure_threshold == 3
-        assert config.success_threshold == 1
         assert config.timeout_seconds == 30.0
-        assert config.excluded_exceptions == (ValueError,)
-        assert config.expected_exceptions == (IOError,)
 
 
 class TestCircuitBreaker:
@@ -53,7 +43,7 @@ class TestCircuitBreaker:
     def test_initial_state_closed(self):
         """Test initial state is CLOSED."""
         breaker = CircuitBreaker("test")
-        assert breaker.state == CircuitState.CLOSED
+        assert breaker.state == "closed"
         assert breaker._failure_count == 0
 
     def test_successful_call_increments_stats(self):
@@ -61,8 +51,8 @@ class TestCircuitBreaker:
         breaker = CircuitBreaker("test")
         result = breaker.call(lambda: "success")
         assert result == "success"
-        assert breaker.stats.successful_calls == 1
-        assert breaker.stats.total_calls == 1
+        assert breaker.stats["success"] == 1
+        assert breaker.stats["total"] == 1
 
     def test_failed_call_increments_failure_count(self):
         """Test failed call increments failure count."""
@@ -72,7 +62,7 @@ class TestCircuitBreaker:
             breaker.call(lambda: (_ for _ in ()).throw(ValueError("error")))
 
         assert breaker._failure_count == 1
-        assert breaker.stats.failed_calls == 1
+        assert breaker.stats["failure"] == 1
 
     def test_opens_after_threshold(self):
         """Test circuit opens after failure threshold."""
@@ -83,8 +73,8 @@ class TestCircuitBreaker:
             with pytest.raises(ValueError):
                 breaker.call(lambda: (_ for _ in ()).throw(ValueError("error")))
 
-        assert breaker.state == CircuitState.OPEN
-        assert breaker.stats.failed_calls == 3
+        assert breaker.state == "open"
+        assert breaker.stats["failure"] == 3
 
     def test_rejects_calls_when_open(self):
         """Test calls are rejected when OPEN."""
@@ -94,16 +84,16 @@ class TestCircuitBreaker:
         with pytest.raises(ValueError):
             breaker.call(lambda: (_ for _ in ()).throw(ValueError("error")))
 
-        assert breaker.state == CircuitState.OPEN
+        assert breaker.state == "open"
 
         # Next call should be rejected
         with pytest.raises(CircuitOpenError):
             breaker.call(lambda: "success")
 
-        assert breaker.stats.rejected_calls == 1
+        assert breaker.stats["rejected"] == 1
 
-    def test_transitions_to_half_open_after_timeout(self):
-        """Test transition to HALF_OPEN after timeout."""
+    def test_auto_recovers_after_timeout(self):
+        """Test circuit auto-recovers to CLOSED after timeout."""
         breaker = CircuitBreaker(
             "test",
             config=CircuitBreakerConfig(failure_threshold=1, timeout_seconds=0.1)
@@ -113,99 +103,14 @@ class TestCircuitBreaker:
         with pytest.raises(ValueError):
             breaker.call(lambda: (_ for _ in ()).throw(ValueError("error")))
 
-        assert breaker.state == CircuitState.OPEN
+        assert breaker.state == "open"
 
         # Wait for timeout
         time.sleep(0.15)
 
-        # State should transition to HALF_OPEN on next check
-        assert breaker.state == CircuitState.HALF_OPEN
-
-    def test_closes_after_success_threshold_in_half_open(self):
-        """Test circuit closes after success threshold in HALF_OPEN."""
-        breaker = CircuitBreaker(
-            "test",
-            config=CircuitBreakerConfig(
-                failure_threshold=1,
-                success_threshold=2,
-                timeout_seconds=0.1
-            )
-        )
-
-        # Fail to open
-        with pytest.raises(ValueError):
-            breaker.call(lambda: (_ for _ in ()).throw(ValueError("error")))
-
-        # Wait for half-open
-        time.sleep(0.15)
-        assert breaker.state == CircuitState.HALF_OPEN
-
-        # Succeed twice to close
-        breaker.call(lambda: "success1")
-        assert breaker.state == CircuitState.HALF_OPEN
-
-        breaker.call(lambda: "success2")
-        assert breaker.state == CircuitState.CLOSED
-
-    def test_failure_in_half_open_reopens(self):
-        """Test failure in HALF_OPEN reopens circuit."""
-        breaker = CircuitBreaker(
-            "test",
-            config=CircuitBreakerConfig(
-                failure_threshold=1,
-                success_threshold=2,
-                timeout_seconds=0.1
-            )
-        )
-
-        # Fail to open
-        with pytest.raises(ValueError):
-            breaker.call(lambda: (_ for _ in ()).throw(ValueError("error")))
-
-        # Wait for half-open
-        time.sleep(0.15)
-        assert breaker.state == CircuitState.HALF_OPEN
-
-        # Fail again - should reopen
-        with pytest.raises(ValueError):
-            breaker.call(lambda: (_ for _ in ()).throw(ValueError("error")))
-
-        assert breaker.state == CircuitState.OPEN
-
-    def test_excluded_exceptions_dont_count(self):
-        """Test excluded exceptions don't count as failures."""
-        breaker = CircuitBreaker(
-            "test",
-            config=CircuitBreakerConfig(
-                failure_threshold=1,
-                excluded_exceptions=(ValueError,)
-            )
-        )
-
-        # ValueError is excluded
-        with pytest.raises(ValueError):
-            breaker.call(lambda: (_ for _ in ()).throw(ValueError("excluded")))
-
-        # Should still be CLOSED, failure count not incremented
-        assert breaker.state == CircuitState.CLOSED
+        # State should transition to CLOSED on next check
+        assert breaker.state == "closed"
         assert breaker._failure_count == 0
-        assert breaker.stats.successful_calls == 1  # Excluded counts as success
-
-    def test_expected_exceptions_count(self):
-        """Test expected exceptions count as failures."""
-        breaker = CircuitBreaker(
-            "test",
-            config=CircuitBreakerConfig(
-                failure_threshold=1,
-                expected_exceptions=(IOError,)
-            )
-        )
-
-        with pytest.raises(IOError):
-            breaker.call(lambda: (_ for _ in ()).throw(IOError("expected")))
-
-        assert breaker.state == CircuitState.OPEN
-        assert breaker._failure_count == 1
 
     def test_get_status(self):
         """Test status reporting."""
@@ -220,9 +125,9 @@ class TestCircuitBreaker:
         assert status["name"] == "test"
         assert status["state"] == "closed"
         assert status["failure_count"] == 1
-        assert status["stats"]["total_calls"] == 3
-        assert status["stats"]["successful_calls"] == 2
-        assert status["stats"]["failed_calls"] == 1
+        assert status["stats"]["total"] == 3
+        assert status["stats"]["success"] == 2
+        assert status["stats"]["failure"] == 1
 
     def test_reset(self):
         """Test manual reset."""
@@ -231,21 +136,21 @@ class TestCircuitBreaker:
         with pytest.raises(ValueError):
             breaker.call(lambda: (_ for _ in ()).throw(ValueError("error")))
 
-        assert breaker.state == CircuitState.OPEN
+        assert breaker.state == "open"
 
         breaker.reset()
 
-        assert breaker.state == CircuitState.CLOSED
+        assert breaker.state == "closed"
         assert breaker._failure_count == 0
 
     def test_force_open(self):
         """Test manual force open."""
         breaker = CircuitBreaker("test")
-        assert breaker.state == CircuitState.CLOSED
+        assert breaker.state == "closed"
 
         breaker.force_open()
 
-        assert breaker.state == CircuitState.OPEN
+        assert breaker.state == "open"
 
 
 class TestCircuitBreakerRegistry:
@@ -280,13 +185,13 @@ class TestCircuitBreakerRegistry:
             with pytest.raises(ValueError):
                 cb.call(lambda: (_ for _ in ()).throw(ValueError("error")))
 
-        assert cb1.state == CircuitState.OPEN
-        assert cb2.state == CircuitState.OPEN
+        assert cb1.state == "open"
+        assert cb2.state == "open"
 
         reset_all_circuit_breakers()
 
-        assert cb1.state == CircuitState.CLOSED
-        assert cb2.state == CircuitState.CLOSED
+        assert cb1.state == "closed"
+        assert cb2.state == "closed"
 
 
 class TestCircuitOpenError:

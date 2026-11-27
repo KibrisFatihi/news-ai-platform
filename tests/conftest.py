@@ -219,22 +219,54 @@ def temp_repo_path(tmp_path: Path) -> Path:
     return tmp_path / "test_news_feed.json"
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def reset_rate_limiter():
-    """Reset the global rate limiter before and after test."""
+    """Reset the global rate limiter before and after every test."""
     from backend.rate_limiter import reset_groq_rate_limiter
     reset_groq_rate_limiter()
     yield
     reset_groq_rate_limiter()
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def reset_circuit_breakers():
-    """Reset all circuit breakers before and after test."""
+    """Reset all circuit breakers before and after every test."""
     from backend.circuit_breaker import reset_all_circuit_breakers
     reset_all_circuit_breakers()
     yield
     reset_all_circuit_breakers()
+
+
+@pytest.fixture(autouse=True)
+def reset_refresh_state():
+    """Reset refresh endpoint rate limit, lock, and token secret state before and after every test."""
+    import os
+
+    import backend.handlers as handlers_module
+    from backend.middleware import _refresh_rate_limit, _refresh_rate_limit_lock
+
+    with _refresh_rate_limit_lock:
+        _refresh_rate_limit.clear()
+
+    if handlers_module._refresh_lock.locked():
+        handlers_module._refresh_lock.release()
+    handlers_module._refresh_in_progress = False
+
+    # Restore the test refresh token secret so token-computation tests stay
+    # isolated from any test that mutates os.environ["REFRESH_TOKEN_SECRET"]
+    # without reverting it (defense in depth).
+    os.environ["REFRESH_TOKEN_SECRET"] = "test-secret-key-for-testing-only"
+
+    yield
+
+    with _refresh_rate_limit_lock:
+        _refresh_rate_limit.clear()
+
+    if handlers_module._refresh_lock.locked():
+        handlers_module._refresh_lock.release()
+    handlers_module._refresh_in_progress = False
+
+    os.environ["REFRESH_TOKEN_SECRET"] = "test-secret-key-for-testing-only"
 
 
 @pytest.fixture

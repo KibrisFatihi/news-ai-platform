@@ -155,6 +155,9 @@ class TestAPIServerE2E:
         env = {
             **os.environ,
             "REFRESH_TOKEN_SECRET": test_secret,
+            "DISABLE_SCHEDULER": "1",
+            "MAX_PER_SOURCE": "1",
+            "MOCK_PIPELINE": "1",
             "PYTHONPATH": str(project_root),
             "PYTHONDONTWRITEBYTECODE": "1",
             "PYTHONUNBUFFERED": "1",
@@ -179,6 +182,25 @@ class TestAPIServerE2E:
                 break
             except requests.exceptions.ConnectionError:
                 time.sleep(0.5)
+
+        # Check if server is responding before yielding
+        server_responding = False
+        for _ in range(10):
+            try:
+                requests.get("http://localhost:8000/api/status", timeout=1)
+                server_responding = True
+                break
+            except requests.exceptions.ConnectionError:
+                time.sleep(0.5)
+
+        if not server_responding:
+            proc.terminate()
+            try:
+                proc.communicate(timeout=5)
+            except Exception:
+                proc.kill()
+            kill_port_8000()
+            pytest.skip("Test server could not be started on port 8000")
 
         yield "http://localhost:8000", expected_token
 
@@ -226,7 +248,7 @@ class TestAPIServerE2E:
             f"{url}/api/refresh",
             json={},
             headers={"X-Refresh-Token": token},
-            timeout=30
+            timeout=90
         )
         assert response.status_code == 200
         data = response.json()

@@ -32,7 +32,7 @@
 
   <!-- Üst Kırmızı Editoryal Şerit -->
   <div class="bg-[#991B1B] text-red-50 text-[11px] tracking-wider uppercase py-1.5 px-4">
-    <div class="max-w-4xl mx-auto flex flex-wrap items-center justify-between gap-2">
+    <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2">
       <div class="flex items-center gap-3 font-medium">
         <span id="currentDateLabel">GÜNCEL BÜLTEN</span>
         <span class="text-red-300/60">|</span>
@@ -40,7 +40,8 @@
         <span class="text-red-300/60">|</span>
         <span><strong id="sourceCount" class="text-white font-bold">21</strong> KAYNAK</span>
       </div>
-      <div class="flex items-center gap-2">
+      <div class="flex items-center gap-3">
+        <span id="headerWeatherMini" class="hidden sm:inline-flex items-center gap-2 text-red-100/90 font-medium"></span>
         <span id="activeEngineBadge" class="inline-flex items-center gap-1.5 font-semibold text-white"></span>
       </div>
     </div>
@@ -48,7 +49,7 @@
 
   <!-- Başlık ve Kontroller -->
   <header class="bg-[#FAF8F5]/95 backdrop-blur-sm border-b border-stone-300 sticky top-0 z-40">
-    <div class="max-w-4xl mx-auto px-4 sm:px-6">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
       <div class="py-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div class="border-l-4 border-[#B91C1C] pl-3.5">
           <h1 class="font-editorial text-3xl sm:text-4xl font-bold tracking-tight text-stone-950 leading-none">
@@ -61,7 +62,7 @@
 
         <!-- Arama ve Aksiyon Butonları -->
         <div class="flex items-center gap-2">
-          <div class="relative flex-1 sm:w-56">
+          <div class="relative flex-1 sm:w-64">
             <input 
               id="searchInput"
               type="text" 
@@ -106,8 +107,8 @@
     </div>
   </header>
 
-  <!-- Ana Haber Akışı -->
-  <main class="max-w-4xl mx-auto px-4 sm:px-6 py-8 w-full flex-1">
+  <!-- Ana İçerik Alanı -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-7 w-full flex-1">
 
     <!-- Bildirim Çubuğu -->
     <div id="toastMessage" class="hidden mb-6 px-4 py-3 bg-white border-l-4 border-[#B91C1C] border-y border-r border-stone-200 text-stone-800 text-xs flex items-center justify-between">
@@ -115,22 +116,90 @@
       <button onclick="hideToast()" class="text-stone-400 hover:text-[#B91C1C] font-semibold ml-4">Kapat</button>
     </div>
 
-    <!-- Haber Listesi -->
-    <div id="newsGrid" class="divide-y divide-stone-200 bg-white border border-stone-200/90 rounded-md shadow-[0_1px_2px_rgba(0,0,0,0.03)]">
-      <div class="py-20 text-center text-stone-400">
-        <div class="inline-block animate-spin w-5 h-5 border-2 border-[#B91C1C] border-t-transparent rounded-full mb-3"></div>
-        <p class="text-xs font-medium tracking-wide uppercase text-stone-500">Haber akışı yükleniyor...</p>
-      </div>
+    <!-- Manşet Vitrini (Lead + 2 İkincil Haber) -->
+    <section id="heroSection" class="hidden mb-8"></section>
+
+    <!-- 70/30 Editoryal Grid: Sol Ana Akış + Sağ Sticky Sidebar -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+
+      <!-- Sol / Ana Haber Akışı (8 Sütun) -->
+      <section class="lg:col-span-8">
+        <div class="flex items-center justify-between border-b border-stone-300 pb-2 mb-4">
+          <h2 id="feedHeading" class="font-editorial text-lg font-bold text-stone-900 tracking-tight">
+            Gündem Akışı
+          </h2>
+          <span id="feedCountLabel" class="text-[11px] uppercase tracking-wider text-stone-500 font-medium"></span>
+        </div>
+
+        <div id="newsGrid" class="divide-y divide-stone-200 bg-white border border-stone-200/90 rounded-md shadow-[0_1px_2px_rgba(0,0,0,0.03)]">
+          <div class="py-20 text-center text-stone-400">
+            <div class="inline-block animate-spin w-5 h-5 border-2 border-[#B91C1C] border-t-transparent rounded-full mb-3"></div>
+            <p class="text-xs font-medium tracking-wide uppercase text-stone-500">Haber akışı yükleniyor...</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Sağ Editoryal Sidebar (4 Sütun, Sticky) -->
+      <aside class="lg:col-span-4 lg:sticky lg:top-36 space-y-6">
+
+        <!-- Hava Durumu Bülteni & Widget -->
+        <div id="weatherWidget" class="bg-white border border-stone-200/90 rounded-md shadow-[0_1px_2px_rgba(0,0,0,0.03)] overflow-hidden">
+          <div class="px-4 py-3 border-b border-stone-200 bg-[#FAF8F5]/70 flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <span class="w-2 h-2 rounded-full bg-[#B91C1C]"></span>
+              <h3 class="text-xs font-bold uppercase tracking-wider text-stone-900">Hava Durumu Bülteni</h3>
+            </div>
+            <span class="text-[10px] font-semibold uppercase tracking-wider text-stone-400">Türkiye</span>
+          </div>
+          <div id="weatherBody" class="p-4">
+            <p class="text-xs text-stone-400 py-4 text-center">Hava durumu yükleniyor...</p>
+          </div>
+        </div>
+
+        <!-- Çoklu Kaynakta Öne Çıkanlar -->
+        <div id="trendingWidget" class="bg-white border border-stone-200/90 rounded-md shadow-[0_1px_2px_rgba(0,0,0,0.03)] overflow-hidden">
+          <div class="px-4 py-3 border-b border-stone-200 bg-[#FAF8F5]/70 flex items-center justify-between">
+            <h3 class="text-xs font-bold uppercase tracking-wider text-stone-900">Çoklu Kaynakta Öne Çıkanlar</h3>
+            <span class="text-[10px] font-semibold text-[#B91C1C] uppercase">Gündem</span>
+          </div>
+          <div id="trendingBody" class="divide-y divide-stone-100">
+            <p class="text-xs text-stone-400 p-4 text-center">Veri bekleniyor...</p>
+          </div>
+        </div>
+
+        <!-- Son Dakika Zaman Çizelgesi -->
+        <div id="latestWidget" class="bg-white border border-stone-200/90 rounded-md shadow-[0_1px_2px_rgba(0,0,0,0.03)] overflow-hidden">
+          <div class="px-4 py-3 border-b border-stone-200 bg-[#FAF8F5]/70 flex items-center justify-between">
+            <h3 class="text-xs font-bold uppercase tracking-wider text-stone-900">Son Dakika Akışı</h3>
+            <span class="text-[10px] font-semibold text-stone-400 uppercase">Kronolojik</span>
+          </div>
+          <div id="latestBody" class="divide-y divide-stone-100">
+            <p class="text-xs text-stone-400 p-4 text-center">Veri bekleniyor...</p>
+          </div>
+        </div>
+
+        <!-- Kategori Dağılımı -->
+        <div id="categoryWidget" class="bg-white border border-stone-200/90 rounded-md shadow-[0_1px_2px_rgba(0,0,0,0.03)] overflow-hidden">
+          <div class="px-4 py-3 border-b border-stone-200 bg-[#FAF8F5]/70">
+            <h3 class="text-xs font-bold uppercase tracking-wider text-stone-900">Kategori Dağılımı</h3>
+          </div>
+          <div id="categoryBody" class="p-4 flex flex-wrap gap-1.5">
+            <span class="text-xs text-stone-400">Yükleniyor...</span>
+          </div>
+        </div>
+
+      </aside>
     </div>
 
   </main>
 
   <!-- Alt Bilgi -->
   <footer class="border-t border-stone-300 bg-[#FAF8F5] py-6 text-xs text-stone-500 mt-12">
-    <div class="max-w-4xl mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-3">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-3">
       <p>Gündem Özeti — Bağımsız RSS Derleyici & Otomatik Özetleme</p>
       <div class="flex items-center gap-4">
         <a href="/api/news" target="_blank" class="hover:text-[#B91C1C] underline underline-offset-4">JSON Akışı (/api/news)</a>
+        <a href="/api/weather" target="_blank" class="hover:text-[#B91C1C] underline underline-offset-4">Hava Durumu (/api/weather)</a>
         <a href="/api/status" target="_blank" class="hover:text-[#B91C1C] underline underline-offset-4">Sistem Durumu</a>
       </div>
     </div>
@@ -145,7 +214,7 @@
       </div>
 
       <p class="text-xs text-stone-600 mb-4 leading-relaxed">
-        Haber özetlerini <strong>Groq LLaMA 3.3</strong> modeliyle oluşturmak için ücretsiz API anahtarınızı girebilirsiniz. Anahtar yalnızca tarayıcınızda saklanır.
+        Haber özetlerini <strong>Groq</strong> modelleriyle oluşturmak için ücretsiz API anahtarınızı girebilirsiniz. Anahtar yalnızca tarayıcınızda saklanır.
       </p>
 
       <div class="bg-white border-l-2 border-[#B91C1C] border-y border-r border-stone-200 p-3 text-[11px] text-stone-600 mb-4 leading-relaxed">
@@ -178,8 +247,36 @@
     </div>
   </div>
 
+  <!-- Tüm Şehirler Hava Durumu Penceresi -->
+  <div id="weatherModal" class="hidden fixed inset-0 z-50 bg-stone-950/40 backdrop-blur-[1px] flex items-center justify-center p-4">
+    <div class="bg-[#FAF8F5] rounded-md max-w-2xl w-full p-6 border border-stone-300 shadow-lg max-h-[85vh] flex flex-col">
+      <div class="flex items-center justify-between pb-3 border-b border-stone-200 mb-4">
+        <div>
+          <h3 class="font-editorial text-2xl font-bold text-stone-950">Türkiye Hava Durumu — Tüm İller</h3>
+          <p id="weatherModalSubtitle" class="text-xs text-stone-500 mt-0.5">Büyükşehirler ve bölgesel merkezlerde anlık sıcaklık ve rüzgar verileri</p>
+        </div>
+        <button onclick="toggleWeatherModal()" class="text-stone-400 hover:text-stone-800 text-xl leading-none px-2">&times;</button>
+      </div>
+
+      <div id="weatherModalGrid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 overflow-y-auto pr-1 py-1">
+        <!-- JS ile doldurulur -->
+      </div>
+
+      <div class="pt-4 mt-4 border-t border-stone-200 flex flex-wrap items-center justify-between gap-3 text-xs">
+        <span class="text-stone-500">Kaynak: Open-Meteo & Meteoroloji Genel Müdürlüğü</span>
+        <div class="flex items-center gap-3">
+          <a id="weatherSourceLink" href="https://www.mgm.gov.tr/tahmin/il-ve-ilceler.aspx" target="_blank" rel="noopener noreferrer" class="font-semibold text-[#B91C1C] hover:underline">
+            Meteoroloji Kaynağına Git ↗
+          </a>
+          <button onclick="toggleWeatherModal()" class="px-3.5 py-1.5 font-medium text-white bg-stone-800 hover:bg-stone-950 rounded transition-colors">Kapat</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script>
     let allNews = [];
+    let weatherData = null;
     let currentCategory = 'Tümü';
     let refreshToken = '';
     let inMemoryApiKey = '';
@@ -216,6 +313,12 @@
       }
     }
 
+    function validImageUrl(url) {
+      if (!url || typeof url !== 'string') return null;
+      const safe = safeUrl(url);
+      return safe !== '#' ? safe : null;
+    }
+
     function formatTimeLabel(isoStr) {
       if (!isoStr) return 'Güncel';
       try {
@@ -225,6 +328,17 @@
                d.toLocaleDateString('tr-TR', { day: '2-digit', month: 'short' });
       } catch {
         return isoStr;
+      }
+    }
+
+    function formatShortTime(isoStr) {
+      if (!isoStr) return '--:--';
+      try {
+        const d = new Date(isoStr);
+        if (isNaN(d.getTime())) return '';
+        return d.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
+      } catch {
+        return '';
       }
     }
 
@@ -241,6 +355,14 @@
       modal.classList.toggle('hidden');
       if (!modal.classList.contains('hidden')) {
         document.getElementById('groqApiKeyInput').value = getSavedApiKey();
+      }
+    }
+
+    function toggleWeatherModal() {
+      const modal = document.getElementById('weatherModal');
+      modal.classList.toggle('hidden');
+      if (!modal.classList.contains('hidden')) {
+        renderWeatherModal();
       }
     }
 
@@ -285,7 +407,7 @@
       if (!badge) return;
       const hasKey = !!getSavedApiKey();
       if (hasKey) {
-        badge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-amber-300"></span> Groq LLaMA 3.3';
+        badge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-amber-300"></span> 3 Hybrid Groq Modeli';
       } else {
         badge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-white"></span> Otomatik Özet';
       }
@@ -322,6 +444,110 @@
       } catch (e) {
         console.error("Refresh token alınamadı:", e);
       }
+    }
+
+    async function loadWeather() {
+      const bodyEl = document.getElementById('weatherBody');
+      try {
+        const res = await fetch('/api/weather');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        weatherData = data;
+        renderWeatherWidget();
+      } catch (e) {
+        console.error("Hava durumu yüklenemedi:", e);
+        if (bodyEl) {
+          bodyEl.innerHTML = `<p class="text-xs text-stone-500 text-center py-3">Hava durumu şu an alınamadı.</p>`;
+        }
+      }
+    }
+
+    function renderWeatherWidget() {
+      const bodyEl = document.getElementById('weatherBody');
+      const miniEl = document.getElementById('headerWeatherMini');
+      if (!bodyEl) return;
+
+      const cities = (weatherData && Array.isArray(weatherData.cities)) ? weatherData.cities : [];
+      if (cities.length === 0) {
+        bodyEl.innerHTML = `<p class="text-xs text-stone-500 text-center py-3">Hava durumu verisi bulunamadı.</p>`;
+        return;
+      }
+
+      const featured = cities.filter(c => c.featured);
+      const topCities = featured.length > 0 ? featured : cities.slice(0, 3);
+
+      if (miniEl) {
+        miniEl.innerHTML = topCities.map(c =>
+          `<span>${esc(c.name)} <strong>${c.temp !== null ? esc(c.temp) + '°C' : '--'}</strong></span>`
+        ).join('<span class="text-red-300/50">·</span>');
+      }
+
+      const summaryParts = topCities.map(c => `${c.name} ${c.temp !== null ? c.temp + '°C' : '-'}`);
+      const sourceUrl = safeUrl((weatherData && weatherData.source_url) || 'https://www.mgm.gov.tr/tahmin/il-ve-ilceler.aspx');
+
+      bodyEl.innerHTML = `
+        <div class="grid grid-cols-3 gap-2 mb-3">
+          ${topCities.map(c => `
+            <div class="bg-[#FAF8F5] border border-stone-200 rounded p-2.5 text-center">
+              <div class="text-[11px] font-bold text-stone-800 truncate">${esc(c.name)}</div>
+              <div class="text-lg my-0.5 leading-none">${esc(c.icon || '🌡️')}</div>
+              <div class="font-editorial text-lg font-bold text-[#B91C1C] leading-tight">
+                ${c.temp !== null ? esc(c.temp) + '°' : '--'}
+              </div>
+              <div class="text-[10px] text-stone-500 truncate mt-0.5">${esc(c.condition)}</div>
+            </div>
+          `).join('')}
+        </div>
+
+        <p class="text-xs text-stone-600 leading-relaxed mb-3">
+          <strong>Günlük Durum:</strong> ${esc(summaryParts.join(', '))} dolaylarında seyrediyor.
+        </p>
+
+        <div class="flex items-center justify-between pt-2 border-t border-stone-100 text-xs">
+          <button onclick="toggleWeatherModal()" class="font-semibold text-stone-800 hover:text-[#B91C1C] transition-colors">
+            Tüm Şehirler (${cities.length} İl) ▾
+          </button>
+          <a href="${sourceUrl}" target="_blank" rel="noopener noreferrer" class="font-semibold text-[#B91C1C] hover:underline">
+            Kaynağa Git ↗
+          </a>
+        </div>
+      `;
+    }
+
+    function renderWeatherModal() {
+      const gridEl = document.getElementById('weatherModalGrid');
+      const linkEl = document.getElementById('weatherSourceLink');
+      if (!gridEl) return;
+
+      const cities = (weatherData && Array.isArray(weatherData.cities)) ? weatherData.cities : [];
+      if (linkEl && weatherData && weatherData.source_url) {
+        linkEl.href = safeUrl(weatherData.source_url);
+      }
+
+      if (cities.length === 0) {
+        gridEl.innerHTML = `<p class="text-xs text-stone-500 col-span-full py-6 text-center">Şehir verisi yüklenemedi.</p>`;
+        return;
+      }
+
+      gridEl.innerHTML = cities.map(c => `
+        <div class="bg-white border ${c.featured ? 'border-[#B91C1C]/40' : 'border-stone-200'} rounded p-3 flex items-center justify-between gap-2">
+          <div class="min-w-0">
+            <div class="flex items-center gap-1.5">
+              <span class="font-semibold text-sm text-stone-900 truncate">${esc(c.name)}</span>
+              ${c.featured ? '<span class="text-[9px] uppercase tracking-wider px-1.5 py-0.5 bg-red-50 text-[#B91C1C] rounded font-bold">Ana</span>' : ''}
+            </div>
+            <div class="text-[11px] text-stone-500 truncate">${esc(c.condition)}</div>
+            <div class="text-[10px] text-stone-400 mt-0.5">
+              ${c.feels_like !== null ? 'Hissedilen ' + esc(c.feels_like) + '°' : ''}
+              ${c.wind_kmh !== null ? ' · Rüzgar ' + esc(c.wind_kmh) + ' km/s' : ''}
+            </div>
+          </div>
+          <div class="text-right shrink-0">
+            <span class="text-base block leading-none">${esc(c.icon || '🌡️')}</span>
+            <span class="font-editorial text-xl font-bold text-[#B91C1C]">${c.temp !== null ? esc(c.temp) + '°C' : '--'}</span>
+          </div>
+        </div>
+      `).join('');
     }
 
     async function loadNews() {
@@ -406,8 +632,204 @@
       }
     }
 
+    function renderHero(heroItems) {
+      const heroEl = document.getElementById('heroSection');
+      if (!heroEl) return;
+
+      if (!heroItems || heroItems.length < 3) {
+        heroEl.classList.add('hidden');
+        heroEl.innerHTML = '';
+        return;
+      }
+
+      const [lead, ...secondary] = heroItems;
+      const leadImg = validImageUrl(lead.image_url);
+      const leadLink = safeUrl(lead.link);
+      const leadTime = formatTimeLabel(lead.updated_at || lead.published);
+
+      heroEl.classList.remove('hidden');
+      heroEl.innerHTML = `
+        <div class="flex items-center justify-between border-b border-stone-300 pb-2 mb-4">
+          <div class="flex items-center gap-2">
+            <span class="w-2 h-2 bg-[#B91C1C] inline-block"></span>
+            <h2 class="font-editorial text-lg font-bold text-stone-900 tracking-tight">Günün Manşetleri</h2>
+          </div>
+          <span class="text-[11px] uppercase tracking-wider text-stone-500 font-medium">Öne Çıkanlar</span>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-5">
+          <!-- Ana Manşet -->
+          <article class="lg:col-span-7 bg-white border border-stone-200/90 rounded-md shadow-[0_1px_2px_rgba(0,0,0,0.03)] overflow-hidden flex flex-col justify-between group">
+            ${leadImg ? `
+              <div class="news-thumb-wrap aspect-[16/9] w-full bg-stone-100 overflow-hidden border-b border-stone-200">
+                <a href="${leadLink}" target="_blank" rel="noopener noreferrer" class="block w-full h-full">
+                  <img src="${esc(leadImg)}" alt="${esc(lead.title)}" loading="eager"
+                    onerror="this.closest('.news-thumb-wrap').remove()"
+                    class="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-300" />
+                </a>
+              </div>
+            ` : ''}
+            <div class="p-5 sm:p-6 flex-1 flex flex-col justify-between">
+              <div>
+                <div class="flex flex-wrap items-center justify-between gap-2 text-[11px] uppercase tracking-wider text-stone-500 mb-2">
+                  <div class="flex items-center gap-2">
+                    <span class="px-1.5 py-0.5 bg-[#B91C1C] text-white text-[10px] font-bold rounded-sm">MANŞET</span>
+                    <span class="font-bold text-[#B91C1C]">${esc(lead.source)}</span>
+                    <span class="text-stone-300">•</span>
+                    <span class="font-medium text-stone-700">${esc(lead.category)}</span>
+                  </div>
+                  <time class="text-stone-400">${esc(leadTime)}</time>
+                </div>
+
+                <h3 class="font-editorial text-2xl sm:text-[28px] font-bold text-stone-950 leading-snug mb-3">
+                  <a href="${leadLink}" target="_blank" rel="noopener noreferrer" class="group-hover:text-[#B91C1C] transition-colors">
+                    ${esc(lead.title)}
+                  </a>
+                </h3>
+
+                <p class="text-sm text-stone-600 leading-relaxed mb-4">
+                  ${esc(lead.summary)}
+                </p>
+              </div>
+
+              <div class="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-stone-100">
+                <div>
+                  ${lead.related_count > 0 ? `
+                    <span class="text-xs text-stone-500">
+                      Ayrıca gündemde: <strong class="font-medium text-stone-800">${esc(lead.related_sources.join(', '))}</strong>
+                    </span>
+                  ` : ''}
+                </div>
+                <a href="${leadLink}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1 text-xs font-semibold text-[#B91C1C] hover:text-[#991B1B] ml-auto">
+                  Kaynağa Git ↗
+                </a>
+              </div>
+            </div>
+          </article>
+
+          <!-- İkincil Manşetler -->
+          <div class="lg:col-span-5 flex flex-col gap-5">
+            ${secondary.slice(0, 2).map(item => {
+              const img = validImageUrl(item.image_url);
+              const link = safeUrl(item.link);
+              const tLabel = formatTimeLabel(item.updated_at || item.published);
+              return `
+                <article class="bg-white border border-stone-200/90 rounded-md shadow-[0_1px_2px_rgba(0,0,0,0.03)] p-4 sm:p-5 flex-1 flex flex-col justify-between group hover:bg-[#FAF8F5]/60 transition-colors">
+                  <div class="flex gap-4 items-start">
+                    <div class="flex-1 min-w-0">
+                      <div class="flex flex-wrap items-center gap-1.5 text-[10px] uppercase tracking-wider text-stone-500 mb-1.5">
+                        <span class="font-bold text-[#B91C1C]">${esc(item.source)}</span>
+                        <span class="text-stone-300">•</span>
+                        <span class="font-medium text-stone-700">${esc(item.category)}</span>
+                      </div>
+                      <h3 class="font-editorial text-lg sm:text-xl font-semibold text-stone-950 leading-snug mb-2">
+                        <a href="${link}" target="_blank" rel="noopener noreferrer" class="group-hover:text-[#B91C1C] transition-colors">
+                          ${esc(item.title)}
+                        </a>
+                      </h3>
+                      <p class="text-xs text-stone-600 leading-relaxed line-clamp-3">
+                        ${esc(item.summary)}
+                      </p>
+                    </div>
+                    ${img ? `
+                      <div class="news-thumb-wrap w-24 sm:w-28 aspect-[4/3] shrink-0 bg-stone-100 rounded overflow-hidden border border-stone-200">
+                        <img src="${esc(img)}" alt="${esc(item.title)}" loading="lazy"
+                          onerror="this.closest('.news-thumb-wrap').remove()"
+                          class="w-full h-full object-cover" />
+                      </div>
+                    ` : ''}
+                  </div>
+                  <div class="flex items-center justify-between gap-2 pt-3 mt-3 border-t border-stone-100 text-[11px]">
+                    <time class="text-stone-400">${esc(tLabel)}</time>
+                    <a href="${link}" target="_blank" rel="noopener noreferrer" class="font-semibold text-[#B91C1C] hover:text-[#991B1B]">
+                      Kaynağa Git ↗
+                    </a>
+                  </div>
+                </article>
+              `;
+            }).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    function renderSidebars(articles) {
+      const trendingBody = document.getElementById('trendingBody');
+      const latestBody = document.getElementById('latestBody');
+      const categoryBody = document.getElementById('categoryBody');
+
+      if (trendingBody) {
+        const multiSource = [...articles]
+          .filter(a => (a.related_count || 0) > 0)
+          .sort((a, b) => (b.related_count || 0) - (a.related_count || 0))
+          .slice(0, 5);
+
+        if (multiSource.length === 0) {
+          trendingBody.innerHTML = `<p class="text-xs text-stone-400 p-4 text-center">Çoklu kaynak eşleşmesi henüz yok.</p>`;
+        } else {
+          trendingBody.innerHTML = multiSource.map((item, idx) => `
+            <a href="${safeUrl(item.link)}" target="_blank" rel="noopener noreferrer" class="block p-3.5 hover:bg-[#FAF8F5] transition-colors group">
+              <div class="flex items-start gap-2.5">
+                <span class="font-editorial text-lg font-bold text-stone-300 group-hover:text-[#B91C1C] leading-none pt-0.5">${idx + 1}</span>
+                <div class="min-w-0 flex-1">
+                  <div class="flex items-center justify-between gap-2 text-[10px] uppercase tracking-wider mb-1">
+                    <span class="font-bold text-[#B91C1C] truncate">${esc(item.source)}</span>
+                    <span class="px-1.5 py-0.5 bg-stone-100 text-stone-700 font-semibold rounded shrink-0">+${esc(item.related_count)} kaynak</span>
+                  </div>
+                  <p class="font-editorial text-sm font-semibold text-stone-900 group-hover:text-[#B91C1C] leading-snug line-clamp-2">
+                    ${esc(item.title)}
+                  </p>
+                </div>
+              </div>
+            </a>
+          `).join('');
+        }
+      }
+
+      if (latestBody) {
+        const latest = articles.slice(0, 6);
+        if (latest.length === 0) {
+          latestBody.innerHTML = `<p class="text-xs text-stone-400 p-4 text-center">Akış boş.</p>`;
+        } else {
+          latestBody.innerHTML = latest.map(item => `
+            <a href="${safeUrl(item.link)}" target="_blank" rel="noopener noreferrer" class="block px-4 py-3 hover:bg-[#FAF8F5] transition-colors group">
+              <div class="flex items-center gap-2 text-[10px] text-stone-400 mb-0.5">
+                <span class="font-mono font-semibold text-[#B91C1C]">${esc(formatShortTime(item.updated_at || item.published))}</span>
+                <span>•</span>
+                <span class="uppercase tracking-wider text-stone-500 truncate">${esc(item.source)}</span>
+              </div>
+              <p class="text-xs font-medium text-stone-800 group-hover:text-[#B91C1C] leading-snug line-clamp-2">
+                ${esc(item.title)}
+              </p>
+            </a>
+          `).join('');
+        }
+      }
+
+      if (categoryBody) {
+        const counts = {};
+        articles.forEach(a => {
+          const c = a.category || 'Genel Gündem';
+          counts[c] = (counts[c] || 0) + 1;
+        });
+        const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+        if (entries.length === 0) {
+          categoryBody.innerHTML = `<span class="text-xs text-stone-400">Kategori yok.</span>`;
+        } else {
+          categoryBody.innerHTML = entries.map(([cat, count]) => `
+            <button onclick="filterCategory('${esc(cat).replace(/'/g, "\\'")}')"
+              class="px-2.5 py-1 text-[11px] rounded border ${currentCategory === cat ? 'bg-[#B91C1C] text-white border-[#B91C1C]' : 'bg-[#FAF8F5] text-stone-700 border-stone-200 hover:border-[#B91C1C] hover:text-[#B91C1C]'} transition-colors">
+              ${esc(cat)} <span class="opacity-75">(${count})</span>
+            </button>
+          `).join('');
+        }
+      }
+    }
+
     function renderNews() {
       const grid = document.getElementById('newsGrid');
+      const feedHeading = document.getElementById('feedHeading');
+      const feedCountLabel = document.getElementById('feedCountLabel');
       const searchTerm = document.getElementById('searchInput').value.toLowerCase();
 
       const filtered = allNews.filter(item => {
@@ -417,7 +839,17 @@
         return matchesCat && matchesSearch;
       });
 
+      if (feedHeading) {
+        feedHeading.innerText = currentCategory === 'Tümü' ? 'Gündem Akışı' : currentCategory;
+      }
+      if (feedCountLabel) {
+        feedCountLabel.innerText = `${filtered.length} HABER`;
+      }
+
+      renderSidebars(allNews);
+
       if (filtered.length === 0) {
+        renderHero([]);
         grid.innerHTML = `
           <div class="py-16 px-6 text-center">
             <p class="font-editorial text-lg font-semibold text-stone-800">Eşleşen haber bulunamadı</p>
@@ -427,50 +859,89 @@
         return;
       }
 
-      grid.innerHTML = filtered.map(item => {
+      // Manşet seçimi: arama yokken ve >= 3 haber varsa ilk 3 haberi (görselli + çoklu kaynaklı öncelikli) vitrine al
+      let heroItems = [];
+      let listItems = filtered;
+
+      if (!searchTerm && filtered.length >= 3) {
+        const ranked = [...filtered].sort((a, b) => {
+          const scoreA = (a.image_url ? 10 : 0) + (a.related_count || 0) * 2;
+          const scoreB = (b.image_url ? 10 : 0) + (b.related_count || 0) * 2;
+          return scoreB - scoreA;
+        });
+        heroItems = ranked.slice(0, 3);
+        const heroSet = new Set(heroItems);
+        listItems = filtered.filter(item => !heroSet.has(item));
+      }
+
+      renderHero(heroItems);
+
+      if (listItems.length === 0) {
+        grid.innerHTML = `
+          <div class="py-10 px-6 text-center text-xs text-stone-500">
+            Bu kategorideki tüm haberler yukarıdaki manşet alanında listelenmiştir.
+          </div>
+        `;
+        return;
+      }
+
+      grid.innerHTML = listItems.map(item => {
         const safeLink = safeUrl(item.link);
+        const imgUrl = validImageUrl(item.image_url);
         const timeLabel = formatTimeLabel(item.updated_at || item.published);
 
         return `
         <article class="p-5 sm:p-6 hover:bg-[#FAF8F5] transition-colors group">
-          <!-- Üst Meta Veriler -->
-          <div class="flex flex-wrap items-center justify-between gap-2 text-[11px] uppercase tracking-wider text-stone-500 mb-2">
-            <div class="flex items-center gap-2">
-              <span class="font-bold text-[#B91C1C]">${esc(item.source)}</span>
-              <span class="text-stone-300">•</span>
-              <span class="font-medium text-stone-700">${esc(item.category)}</span>
+          <div class="flex flex-col sm:flex-row gap-4 sm:gap-5 items-start">
+            <div class="flex-1 min-w-0">
+              <!-- Üst Meta Veriler -->
+              <div class="flex flex-wrap items-center justify-between gap-2 text-[11px] uppercase tracking-wider text-stone-500 mb-2">
+                <div class="flex items-center gap-2">
+                  <span class="font-bold text-[#B91C1C]">${esc(item.source)}</span>
+                  <span class="text-stone-300">•</span>
+                  <span class="font-medium text-stone-700">${esc(item.category)}</span>
+                </div>
+                <div class="flex items-center gap-2 text-stone-400">
+                  <time>${esc(timeLabel)}</time>
+                </div>
+              </div>
+
+              <!-- Haber Başlığı -->
+              <h2 class="font-editorial text-xl sm:text-[22px] font-semibold text-stone-950 leading-snug mb-2">
+                <a href="${safeLink}" target="_blank" rel="noopener noreferrer" class="group-hover:text-[#B91C1C] transition-colors">
+                  ${esc(item.title)}
+                </a>
+              </h2>
+
+              <!-- Özet Metni -->
+              <p class="text-sm text-stone-600 leading-relaxed mb-3.5">
+                ${esc(item.summary)}
+              </p>
+
+              <!-- Alt Satır: Çoklu Kaynak ve Doğrudan Kaynak Linki -->
+              <div class="flex flex-wrap items-center justify-between gap-3 pt-1">
+                <div>
+                  ${item.related_count > 0 ? `
+                    <span class="text-xs text-stone-500">
+                      Ayrıca gündemde: <strong class="font-medium text-stone-800">${esc(item.related_sources.join(', '))}</strong>
+                    </span>
+                  ` : ''}
+                </div>
+
+                <a href="${safeLink}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1 text-xs font-semibold text-[#B91C1C] hover:text-[#991B1B] transition-colors ml-auto">
+                  Kaynağa Git
+                  <span aria-hidden="true" class="transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5">↗</span>
+                </a>
+              </div>
             </div>
-            <div class="flex items-center gap-2 text-stone-400">
-              <time>${esc(timeLabel)}</time>
-            </div>
-          </div>
 
-          <!-- Haber Başlığı -->
-          <h2 class="font-editorial text-xl sm:text-[22px] font-semibold text-stone-950 leading-snug mb-2.5">
-            <a href="${safeLink}" target="_blank" rel="noopener noreferrer" class="group-hover:text-[#B91C1C] transition-colors">
-              ${esc(item.title)}
-            </a>
-          </h2>
-
-          <!-- Özet Metni -->
-          <p class="text-sm text-stone-600 leading-relaxed mb-4">
-            ${esc(item.summary)}
-          </p>
-
-          <!-- Alt Satır: Çoklu Kaynak ve Doğrudan Kaynak Linki -->
-          <div class="flex flex-wrap items-center justify-between gap-3 pt-1">
-            <div>
-              ${item.related_count > 0 ? `
-                <span class="text-xs text-stone-500">
-                  Ayrıca gündemde: <strong class="font-medium text-stone-800">${esc(item.related_sources.join(', '))}</strong>
-                </span>
-              ` : ''}
-            </div>
-
-            <a href="${safeLink}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1 text-xs font-semibold text-[#B91C1C] hover:text-[#991B1B] transition-colors ml-auto">
-              Kaynağa Git
-              <span aria-hidden="true" class="transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5">↗</span>
-            </a>
+            ${imgUrl ? `
+              <a href="${safeLink}" target="_blank" rel="noopener noreferrer" class="news-thumb-wrap w-full sm:w-44 md:w-48 aspect-[16/10] shrink-0 bg-stone-100 rounded overflow-hidden border border-stone-200 block">
+                <img src="${esc(imgUrl)}" alt="${esc(item.title)}" loading="lazy"
+                  onerror="this.closest('.news-thumb-wrap').remove()"
+                  class="w-full h-full object-cover group-hover:scale-[1.03] transition-transform duration-300" />
+              </a>
+            ` : ''}
           </div>
         </article>
       `}).join('');
@@ -492,6 +963,7 @@
 
     updateEngineBadge();
     fetchRefreshToken();
+    loadWeather();
     loadNews();
   </script>
 </body>

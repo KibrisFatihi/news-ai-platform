@@ -1,15 +1,15 @@
 """
 Data Models for News AI Platform
 Pydantic models for type safety, validation, and serialization.
+Consolidated: BaseResponse + composed endpoint responses.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
 from enum import Enum
 
-from pydantic import BaseModel, Field, field_validator, ConfigDict, field_serializer
+from pydantic import BaseModel, Field, field_validator, field_serializer
 
 
 class Category(str, Enum):
@@ -23,11 +23,11 @@ class Category(str, Enum):
     GENERAL = "Genel Gündem"
 
 
-class AIEengine(str, Enum):
-    """AI engine types."""
-    GROQ_LLAMA = "Groq LLaMA 3.3"
-    LOCAL_NLP = "Yerel NLP (Sıfır Token)"
-    LOCAL_NLP_FALLBACK = "Yerel NLP (Yedek Mod)"
+# --- Base Models ---
+
+class BaseResponse(BaseModel):
+    """Base response with common fields."""
+    success: bool = True
 
 
 class ArticleBase(BaseModel):
@@ -39,6 +39,7 @@ class ArticleBase(BaseModel):
     link: str
     published: str
     category: Optional[Category] = None
+    image_url: Optional[str] = None
 
     @field_validator("link", mode="before")
     @classmethod
@@ -69,9 +70,18 @@ class Cluster(BaseModel):
     related_articles: list[dict] = Field(default_factory=list)
 
 
-class NewsResponse(BaseModel):
-    """API response for /api/news endpoint."""
-    success: bool = True
+class SummarizeResult(BaseModel):
+    """Result from a summarization operation."""
+    summary: str
+    engine: str
+    success: bool
+    model: str
+
+
+# --- Endpoint Response Models (composed from BaseResponse) ---
+
+class NewsResponse(BaseResponse):
+    """API response for GET /api/news endpoint."""
     count: int
     categories: dict[str, int]
     groq_configured: bool
@@ -79,16 +89,15 @@ class NewsResponse(BaseModel):
     articles: list[Article]
 
 
-class RefreshResponse(BaseModel):
-    """API response for /api/refresh endpoint."""
-    success: bool
+class RefreshResponse(BaseResponse):
+    """API response for POST /api/refresh endpoint."""
     message: str
     count: int
     articles: list[Article] = Field(default_factory=list)
 
 
-class StatusResponse(BaseModel):
-    """API response for /api/status endpoint."""
+class StatusResponse(BaseResponse):
+    """API response for GET /api/status endpoint."""
     status: str = "online"
     version: str
     groq_connected: bool
@@ -99,21 +108,13 @@ class StatusResponse(BaseModel):
 
 
 class HealthResponse(BaseModel):
-    """API response for /api/health endpoint."""
+    """API response for GET /api/health endpoint."""
     status: str
     timestamp: str
     version: str
     uptime_seconds: float
     components: dict[str, Any]
     warnings: list[str] = Field(default_factory=list)
-
-
-class SummarizeResult(BaseModel):
-    """Result from a summarization operation."""
-    summary: str
-    engine: str
-    success: bool
-    model: str
 
 
 # Type aliases for backwards compatibility

@@ -43,6 +43,7 @@ from backend.handlers import (
     handle_get_health,
     handle_get_news,
     handle_get_status,
+    handle_get_weather,
     handle_not_found,
     handle_options,
     handle_post_refresh,
@@ -61,13 +62,13 @@ logger = get_logger("server")
 # Background scheduler state
 _scheduler_thread: Optional[threading.Thread] = None
 _scheduler_stop_event: Optional[threading.Event] = None
-_scheduler_interval_seconds = 30 * 60  # 30 minutes
 
 
 def _run_background_pipeline():
     """Background task that runs the pipeline periodically."""
     global _scheduler_stop_event
-    logger.info("🕐 Arka plan zamanlayıcı başlatıldı (her 30 dakikada bir yenileme)")
+    interval = get_config().server.scheduler_interval_seconds
+    logger.info(f"🕐 Arka plan zamanlayıcı başlatıldı (her {interval // 60} dakikada bir yenileme)")
 
     while _scheduler_stop_event and not _scheduler_stop_event.is_set():
         try:
@@ -81,7 +82,7 @@ def _run_background_pipeline():
 
         # Wait for interval or stop signal
         if _scheduler_stop_event:
-            _scheduler_stop_event.wait(_scheduler_interval_seconds)
+            _scheduler_stop_event.wait(interval)
 
     logger.info("🛑 Arka plan zamanlayıcı durduruldu.")
 
@@ -208,6 +209,14 @@ class NewsAPIRequestHandler(http.server.SimpleHTTPRequestHandler):
                 self.log_request_with_timing("GET", path, status, request_start, request_id)
                 return
 
+            # API: Turkey Weather
+            if path == "/api/weather":
+                headers_dict = dict(self.headers)
+                status, headers, body = handle_get_weather(headers_dict, request_id)
+                self._send_response(status, headers, body)
+                self.log_request_with_timing("GET", path, status, request_start, request_id)
+                return
+
             # Default: Serve static files (HTML, JS, CSS)
             super().do_GET()
             self.log_request_with_timing("GET", path, 200, request_start, request_id)
@@ -280,11 +289,15 @@ def start_server():
     # Enable address reuse for faster restarts
     socketserver.TCPServer.allow_reuse_address = False
 
-    # Set default socket timeout for RSS requests
-    socket.setdefaulttimeout(cfg.rss.request_timeout)
+    # NOTE: We intentionally do NOT call socket.setdefaulttimeout() here.
+    # A global socket timeout would break the long-lived HTTP connection
+    # that the browser holds open while /api/refresh runs the full pipeline
+    # (RSS fetch + NLP + summarization can take 60-120s).
+    # RSS fetch timeout is applied per-request via urllib.request.urlopen(timeout=).
 
-    # Start background scheduler for automatic RSS refresh
-    start_scheduler()
+    # Start background scheduler for automatic RSS refresh (unless disabled in tests)
+    if os.environ.get("DISABLE_SCHEDULER") != "1":
+        start_scheduler()
 
     # Use ThreadingHTTPServer for concurrent request handling (Python 3.7+)
     with http.server.ThreadingHTTPServer(server_address, NewsAPIRequestHandler) as httpd:

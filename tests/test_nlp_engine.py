@@ -142,6 +142,18 @@ class TestClassifyCategory:
         category = classify_category(title, content)
         assert category == "Savunma & Teknoloji"
 
+    def test_classify_hacker_is_technology(self):
+        """Hacker / cyberattack news should classify as Savunma & Teknoloji even with 'piyasa' in text."""
+        title = "GTA 6'yı sızdıran hacker'a hapis cezası"
+        content = "Oyunu piyasaya sürülmesinden önce sızdıran hacker ceza aldı."
+        assert classify_category(title, content) == "Savunma & Teknoloji"
+
+    def test_classify_deneyimli_not_bilim(self):
+        """'deneyimli' (experienced) should not falsely match 'deney' (experiment) in Bilim."""
+        title = "Şirkette üst düzey atama"
+        content = "Deneyimli yönetici genel müdür olarak atandı."
+        assert classify_category(title, content) == "Ekonomi"
+
 
 class TestComputeCosineSimilarity:
     """Tests for compute_cosine_similarity function."""

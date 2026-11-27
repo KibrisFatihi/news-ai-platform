@@ -467,11 +467,10 @@ class TestMiddleware:
         assert check_conditional_request(headers, None, 1767268800) is True
         assert check_conditional_request(headers, None, 1767268801) is False  # Later
 
-    def test_verify_refresh_token(self):
+    def test_verify_refresh_token(self, monkeypatch):
         """Test refresh token verification."""
         from backend.middleware import verify_refresh_token
-        import os
-        os.environ["REFRESH_TOKEN_SECRET"] = "test-secret"
+        monkeypatch.setenv("REFRESH_TOKEN_SECRET", "test-secret")
 
         import hashlib
         import hmac

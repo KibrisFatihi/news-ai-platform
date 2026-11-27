@@ -27,7 +27,7 @@ class TestHandleGetNews:
         request_id = generate_request_id()
         headers = {"Origin": "https://example.com"}
 
-        with patch("backend.handlers.get_news_repository") as mock_repo:
+        with patch("backend.handlers.common.get_news_repository") as mock_repo:
             mock_repo_instance = MagicMock()
             mock_repo_instance.load_or_fallback.return_value = []
             mock_repo_instance.get_last_modified.return_value = None
@@ -66,8 +66,8 @@ class TestHandleGetNews:
             }
         ]
 
-        with patch("backend.handlers.get_news_repository") as mock_repo, \
-             patch("backend.handlers.cfg") as mock_cfg:
+        with patch("backend.handlers.common.get_news_repository") as mock_repo, \
+             patch("backend.handlers.common.cfg") as mock_cfg:
 
             mock_repo_instance = MagicMock()
             mock_repo_instance.load_or_fallback.return_value = articles
@@ -94,13 +94,13 @@ class TestHandleGetNews:
 
         articles = [{"title": "Test"}]
 
-        with patch("backend.handlers.get_news_repository") as mock_repo:
+        with patch("backend.handlers.common.get_news_repository") as mock_repo:
             mock_repo_instance = MagicMock()
             mock_repo_instance.load_or_fallback.return_value = articles
             mock_repo_instance.get_last_modified.return_value = 1767268800
             mock_repo.return_value = mock_repo_instance
 
-            with patch("backend.handlers.compute_etag", return_value="abc123"):
+            with patch("backend.middleware.compute_etag", return_value="abc123"):
                 status, resp_headers, body = handle_get_news(headers, request_id)
 
                 assert status == 304
@@ -115,12 +115,12 @@ class TestHandleGetStatus:
         request_id = generate_request_id()
         headers = {"Origin": "https://example.com"}
 
-        with patch("backend.handlers.cfg") as mock_cfg:
+        with patch("backend.handlers.common.cfg") as mock_cfg:
             mock_cfg.get_groq_api_key.return_value = "gsk_test"
             mock_cfg.groq.default_model = "llama-3.3-70b-versatile"
 
-            with patch("backend.handlers._server_start_time", 1767268800):
-                with patch("backend.handlers.time.time", return_value=1767268900):
+            with patch("backend.handlers.common._server_start_time", 1767268800):
+                with patch("time.time", return_value=1767268900):
                     status, resp_headers, body = handle_get_status(headers, request_id)
 
                     assert status == 200
@@ -137,7 +137,7 @@ class TestHandleGetHealth:
         request_id = generate_request_id()
         headers = {"Origin": "https://example.com"}
 
-        with patch("backend.handlers.get_news_repository") as mock_repo, \
+        with patch("backend.handlers.common.get_news_repository") as mock_repo, \
              patch("backend.groq_service.get_groq_status") as mock_groq_status, \
              patch("backend.circuit_breaker.get_all_circuit_breakers") as mock_cb:
 
@@ -156,8 +156,8 @@ class TestHandleGetHealth:
                 "groq_api": {"state": "closed"}
             }
 
-            with patch("backend.handlers._server_start_time", 1767268800):
-                with patch("backend.handlers.time.time", return_value=1767268900):
+            with patch("backend.handlers.common._server_start_time", 1767268800):
+                with patch("time.time", return_value=1767268900):
                     status, resp_headers, body = handle_get_health(headers, request_id)
 
                     assert status == 200
@@ -179,11 +179,11 @@ class TestHandlePostRefresh:
         body = b'{"api_key": "gsk_test"}'
         client_ip = "127.0.0.1"
 
-        with patch("backend.handlers.verify_refresh_token", return_value=True), \
-             patch("backend.handlers.check_refresh_rate_limit", return_value=(True, 0)), \
+        with patch("backend.middleware.verify_refresh_token", return_value=True), \
+             patch("backend.middleware.check_refresh_rate_limit", return_value=(True, 0)), \
              patch("main.run_pipeline") as mock_pipeline, \
              patch("backend.handlers._refresh_lock", MagicMock()), \
-             patch("backend.handlers.cfg") as mock_cfg:
+             patch("backend.handlers.common.cfg") as mock_cfg:
 
             mock_cfg.server.max_request_size_mb = 10
             mock_pipeline.return_value = [
@@ -222,7 +222,7 @@ class TestHandlePostRefresh:
         body = b"{}"
         client_ip = "127.0.0.1"
 
-        with patch("backend.handlers.verify_refresh_token", return_value=False):
+        with patch("backend.middleware.verify_refresh_token", return_value=False):
             status, resp_headers, resp_body = handle_post_refresh(headers, body, client_ip, request_id)
 
             assert status == 401
@@ -238,8 +238,8 @@ class TestHandlePostRefresh:
         body = b"{}"
         client_ip = "127.0.0.1"
 
-        with patch("backend.handlers.verify_refresh_token", return_value=True), \
-             patch("backend.handlers.check_refresh_rate_limit", return_value=(False, 60)):
+        with patch("backend.middleware.verify_refresh_token", return_value=True), \
+             patch("backend.middleware.check_refresh_rate_limit", return_value=(False, 60)):
             status, resp_headers, resp_body = handle_post_refresh(headers, body, client_ip, request_id)
 
             assert status == 429
@@ -259,9 +259,9 @@ class TestHandlePostRefresh:
         mock_lock = MagicMock()
         mock_lock.acquire.return_value = False
 
-        with patch("backend.handlers.verify_refresh_token", return_value=True), \
-             patch("backend.handlers.check_refresh_rate_limit", return_value=(True, 0)), \
-             patch("backend.handlers._refresh_lock", mock_lock):
+        with patch("backend.middleware.verify_refresh_token", return_value=True), \
+             patch("backend.middleware.check_refresh_rate_limit", return_value=(True, 0)), \
+             patch("backend.handlers.refresh._refresh_lock", mock_lock):
             status, resp_headers, resp_body = handle_post_refresh(headers, body, client_ip, request_id)
 
             assert status == 409

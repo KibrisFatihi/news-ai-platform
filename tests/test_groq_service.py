@@ -17,6 +17,7 @@ from backend.groq_service import (
     summarize_with_groq,
 )
 from backend.summarizer import ResilientSummarizer, create_resilient_summarizer
+from config import get_config
 
 
 class TestGetGroqApiKey:
@@ -100,7 +101,8 @@ class TestSummarizeWithGroq:
         assert result["success"] is True
         assert "Groq" in result["engine"]
         assert result["summary"] == "Groq summary here"
-        assert result["model"] == DEFAULT_MODEL
+        # Rotasyon etkin: model, rotasyon listesindeki ilk model olur
+        assert result["model"] == get_config().groq.model_rotation[0]
 
     @patch("backend.groq_service.get_groq_api_key")
     @patch("backend.summarizer.requests.post")
@@ -313,7 +315,7 @@ class TestConstants:
         assert GROQ_API_URL == "https://api.groq.com/openai/v1/chat/completions"
 
     def test_default_model(self):
-        assert DEFAULT_MODEL == "llama-3.3-70b-versatile"
+        assert DEFAULT_MODEL == "qwen/qwen3.8-27b"
 
     def test_fast_model(self):
-        assert FAST_MODEL == "llama-3.1-8b-instant"
+        assert FAST_MODEL == "qwen/qwen3.8-27b"

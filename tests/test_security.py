@@ -152,7 +152,7 @@ class TestRateLimiterLeak:
         now = time.time()
         cutoff = now - window.window_seconds
         # Clean up manually for check
-        with window._condition:
+        with window._lock:
             while window.requests and window.requests[0] < cutoff:
                 window.requests.popleft()
             assert len(window.requests) == 2
@@ -164,7 +164,7 @@ class TestRateLimiterLeak:
         assert window.acquire(1) is True
 
         # Check that old entries were cleaned
-        with window._condition:
+        with window._lock:
             now = time.time()
             cutoff = now - window.window_seconds
             while window.requests and window.requests[0] < cutoff:

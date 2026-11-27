@@ -18,7 +18,6 @@ from backend.models import (
     RefreshResponse,
     StatusResponse,
     SummarizeResult,
-    AIEengine,
 )
 
 
@@ -281,11 +280,3 @@ class TestHealthResponse:
         assert "news_cache" in response.components
 
 
-class TestAIEengine:
-    """Tests for AIEengine enum."""
-
-    def test_engine_values(self):
-        """Test engine enum values."""
-        assert AIEengine.GROQ_LLAMA == "Groq LLaMA 3.3"
-        assert AIEengine.LOCAL_NLP == "Yerel NLP (Sıfır Token)"
-        assert AIEengine.LOCAL_NLP_FALLBACK == "Yerel NLP (Yedek Mod)"

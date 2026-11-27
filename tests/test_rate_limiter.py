@@ -11,6 +11,10 @@ import pytest
 from backend.rate_limiter import RateLimitWindow, RateLimiter, get_groq_rate_limiter, reset_groq_rate_limiter
 
 
+# pytest-asyncio is no longer needed since AsyncRateLimiter was removed
+# pytest_plugins = ["pytest_asyncio"]
+
+
 class TestRateLimitWindow:
     """Tests for RateLimitWindow class."""
 
@@ -61,25 +65,6 @@ class TestRateLimitWindow:
         wait = window.wait_time()
         assert wait > 0
         assert wait <= 60
-
-    def test_wait_for_slot(self):
-        """Test efficient waiting for slot."""
-        window = RateLimitWindow(max_requests=1, window_seconds=1)
-
-        # Acquire the only slot
-        window.acquire(1)
-
-        # Wait for slot with timeout
-        result = window.wait_for_slot(1, timeout=0.5)
-        # Should timeout before slot available
-        assert result is False
-
-        # Wait for window to clear
-        time.sleep(1.1)
-
-        # Should succeed now
-        result = window.wait_for_slot(1, timeout=0.5)
-        assert result is True
 
 
 class TestRateLimiter:
@@ -212,26 +197,3 @@ class TestRateLimiterIntegration:
             assert "Rate Limit" in result.engine
 
 
-class TestAsyncRateLimiter:
-    """Tests for AsyncRateLimiter."""
-
-    @pytest.mark.asyncio
-    async def test_async_acquire(self):
-        """Test async acquire."""
-        from backend.rate_limiter import AsyncRateLimiter
-
-        limiter = AsyncRateLimiter(rpm=5, rpd=1000)
-        result = await limiter.acquire(1)
-        assert result is True
-
-    @pytest.mark.asyncio
-    async def test_async_status(self):
-        """Test async status."""
-        from backend.rate_limiter import AsyncRateLimiter
-
-        limiter = AsyncRateLimiter(rpm=5, rpd=1000)
-        await limiter.acquire(2)
-
-        status = limiter.get_status()
-        assert status["rpm"]["used"] == 2
-        assert status["rpm"]["remaining"] == 3
