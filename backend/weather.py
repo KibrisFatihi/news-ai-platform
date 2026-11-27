@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import threading
 import time
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -123,6 +124,96 @@ def _fetch_open_meteo() -> List[Dict[str, Any]]:
     return cities_out
 
 
+def _describe_wttr_code(code: Optional[int]) -> tuple[str, str]:
+    """Map wttr.in weatherCode to our Turkish label and emoji icon."""
+    if code is None:
+        return ("Bilinmiyor", "🌡️")
+    wttr_map = {
+        113: ("Açık", "☀️"),
+        116: ("Az Bulutlu", "🌤️"),
+        119: ("Çok Bulutlu", "☁️"),
+        122: ("Çok Bulutlu", "☁️"),
+        143: ("Sisli", "🌫️"),
+        248: ("Sisli", "🌫️"),
+        260: ("Sisli", "🌫️"),
+        266: ("Hafif Kar", "🌨️"),
+        281: ("Yoğun Kar", "❄️"),
+        284: ("Yoğun Kar", "❄️"),
+        293: ("Hafif Yağmur", "🌦️"),
+        296: ("Yağmurlu", "🌧️"),
+        299: ("Yağmurlu", "🌧️"),
+        302: ("Kuvvetli Yağmur", "🌧️"),
+        305: ("Kuvvetli Yağmur", "🌧️"),
+        308: ("Kuvvetli Yağmur", "🌧️"),
+        311: ("Kar Yağışlı", "❄️"),
+        314: ("Kar Yağışlı", "❄️"),
+        317: ("Yoğun Kar", "❄️"),
+        320: ("Hafif Kar", "🌨️"),
+        323: ("Kar Yağışlı", "❄️"),
+        326: ("Yoğun Kar", "❄️"),
+        329: ("Sağanak Yağış", "🌦️"),
+        332: ("Sağanak Yağış", "🌦️"),
+        335: ("Şiddetli Sağanak", "⛈️"),
+        338: ("Sağanak Yağış", "🌦️"),
+        350: ("Hafif Yağmur", "🌦️"),
+        353: ("Hafif Yağmur", "🌦️"),
+        356: ("Yağmurlu", "🌧️"),
+        359: ("Kuvvetli Yağmur", "🌧️"),
+        362: ("Hafif Kar", "🌨️"),
+        365: ("Kar Yağışlı", "❄️"),
+        368: ("Yoğun Kar", "❄️"),
+        371: ("Hafif Kar", "🌨️"),
+        374: ("Sağanak Yağış", "🌦️"),
+        377: ("Şiddetli Sağanak", "⛈️"),
+        386: ("Kuvvetli Yağmur", "🌧️"),
+        389: ("Şiddetli Fırtına", "⛈️"),
+        392: ("Hafif Kar", "🌨️"),
+        395: ("Kar Yağışlı", "❄️"),
+        398: ("Yoğun Kar", "❄️"),
+    }
+    if code in wttr_map:
+        return wttr_map[code]
+    if 200 <= code <= 299:
+        return ("Sisli", "🌫️")
+    if 300 <= code <= 399:
+        return ("Yağışlı", "🌧️")
+    return ("Bulutlu", "☁️")
+
+
+def _fetch_wttr_in_city(city_name: str) -> Optional[Dict[str, Any]]:
+    """Fetch weather for a single city from wttr.in (free, no API key).
+
+    Used as a fallback when Open-Meteo is unreachable (e.g. Render outbound
+    restrictions). Returns a dict shaped like one Open-Meteo city entry, or
+    None on failure.
+    """
+    url = f"https://wttr.in/{urllib.parse.quote(city_name)}?format=j1"
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": "GundemOzeti/1.0 (+https://open-meteo.com)"},
+    )
+    with urllib.request.urlopen(req, timeout=_REQUEST_TIMEOUT_SECONDS) as resp:
+        raw = json.loads(resp.read().decode("utf-8"))
+
+    current = (raw.get("current_condition") or [{}])[0]
+    code = current.get("weatherCode")
+    condition, icon = _describe_wttr_code(int(code) if code is not None else None)
+    temp = current.get("temp_C")
+    feels_like = current.get("FeelsLikeC")
+    wind = current.get("windspeedKmph")
+
+    return {
+        "name": city_name,
+        "featured": False,
+        "temp": round(float(temp)) if temp is not None else None,
+        "feels_like": round(float(feels_like)) if feels_like is not None else None,
+        "wind_kmh": round(float(wind)) if wind is not None else None,
+        "weather_code": int(code) if code is not None else None,
+        "condition": condition,
+        "icon": icon,
+    }
+
+
 def get_turkey_weather(force_refresh: bool = False) -> Dict[str, Any]:
     """Return cached or freshly fetched weather data for major Turkish cities."""
     global _cached_payload, _cached_at
@@ -134,27 +225,42 @@ def get_turkey_weather(force_refresh: bool = False) -> Dict[str, Any]:
 
     try:
         cities = _fetch_open_meteo()
-        payload: Dict[str, Any] = {
-            "success": True,
-            "source": "Open-Meteo",
-            "source_url": "https://www.mgm.gov.tr/tahmin/il-ve-ilceler.aspx",
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-            "cities": cities,
-        }
-        with _cache_lock:
-            _cached_payload = payload
-            _cached_at = time.time()
-        return payload
+        source = "Open-Meteo"
     except Exception as exc:
-        logger.warning(f"Weather fetch failed: {exc}")
+        logger.warning(f"Open-Meteo fetch failed: {exc}; falling back to wttr.in")
+        cities = []
+        featured_cities = [c for c in TURKEY_CITIES if c.get("featured")]
+        for city in featured_cities:
+            try:
+                entry = _fetch_wttr_in_city(city["name"])
+                if entry:
+                    cities.append(entry)
+            except Exception as exc2:
+                logger.warning(f"wttr.in fetch failed for {city['name']}: {exc2}")
+        source = "wttr.in (fallback)"
+
+    if not cities:
+        logger.warning("All weather sources failed")
         with _cache_lock:
             if _cached_payload:
                 return _cached_payload
         return {
             "success": False,
-            "source": "Open-Meteo",
+            "source": source,
             "source_url": "https://www.mgm.gov.tr/tahmin/il-ve-ilceler.aspx",
             "updated_at": datetime.now(timezone.utc).isoformat(),
             "cities": [],
             "error": "Hava durumu verisi şu an alınamadı.",
         }
+
+    payload: Dict[str, Any] = {
+        "success": True,
+        "source": source,
+        "source_url": "https://www.mgm.gov.tr/tahmin/il-ve-ilceler.aspx",
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "cities": cities,
+    }
+    with _cache_lock:
+        _cached_payload = payload
+        _cached_at = time.time()
+    return payload
