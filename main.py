@@ -16,7 +16,7 @@ from typing import Dict, List, Optional
 
 
 from backend.crawler import fetch_news
-from backend.logger import get_logger, log_pipeline_complete, log_pipeline_start, setup_logging
+from backend.logger import get_logger, log_pipeline_complete, log_pipeline_start
 from backend.nlp_engine import classify_category, cluster_similar_news
 from backend.repository import get_news_repository
 from backend.summarizer import create_resilient_summarizer
@@ -47,8 +47,8 @@ def run_pipeline(
 
     max_items = max_per_source or rss_cfg.max_per_source
 
-    # Setup logging for this run
-    setup_logging(level=cfg.logging.level, log_file=cfg.logging.log_file)
+    # Logging already initialized in server.py on startup (with Windows stdout config)
+    # setup_logging called there — don't call again from background thread
 
     pipeline_start = time.time()
 
