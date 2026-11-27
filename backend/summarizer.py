@@ -1,15 +1,14 @@
 """
 Summarizer - Resilient Groq + Local NLP Summarization
-Consolidates Groq API calls with rate limiting, circuit breaker, model rotation, batching, and local fallback.
+Consolidates Groq API calls with rate limiting, circuit breaker, model rotation, and local fallback.
 """
 from __future__ import annotations
 
-import json
 import re
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, List, Optional, Tuple
+from typing import Any, List, Optional
 
 import requests
 
@@ -22,11 +21,15 @@ from config import GroqConfig, get_config
 
 logger = get_logger("summarizer")
 
-MAX_CONTENT_CHARS = 1800  # TPM limitini korumak için haber başına maks karakter (~400 token)
+MAX_CONTENT_CHARS = 800  # TPM limitini korumak için haber başına maks karakter
 
 
 class _EmptySummaryError(ValueError):
     """Raised when Groq returns HTTP 200 but an empty/unusable summary."""
+
+
+class _RateLimitError(Exception):
+    """Raised on HTTP 429 so circuit breaker doesn't trip on quota limits."""
 
 
 def _clean_groq_summary(raw_content: Optional[str]) -> str:
@@ -82,7 +85,7 @@ class ModelRotator:
         self._lock = threading.RLock()
         self._cooldowns: dict[str, float] = {}
 
-    def mark_rate_limited(self, model: str, cooldown_seconds: float = 5.0) -> None:
+    def mark_rate_limited(self, model: str, cooldown_seconds: float = 3.0) -> None:
         """Put a rate-limited model on temporary cooldown so workers skip it."""
         with self._lock:
             self._cooldowns[model] = time.time() + cooldown_seconds
@@ -133,12 +136,12 @@ class LocalNLPSummarizer:
 
 class ResilientSummarizer:
     """
-    Resilient summarizer: Groq (with model rotation & batching) -> fallback chain -> local NLP.
+    Resilient summarizer: Groq (with model rotation) -> fallback chain -> local NLP.
     """
 
     __slots__ = (
         "groq_api_key", "groq_config", "local_summarizer", "_groq_permanently_unavailable",
-        "model", "_rotation_models", "_rotator", "_system_prompt", "_batch_system_prompt"
+        "model", "_rotation_models", "_rotator", "_system_prompt"
     )
 
     def __init__(
@@ -165,14 +168,6 @@ class ResilientSummarizer:
             "Ekstra giriş/çıkış cümlesi (örneğin 'İşte özet:', 'Özet:') yazma, sadece özeti ver. "
             "Başlıkla alakasız bilgiler ekleme, metinde olmayan şeyleri uydurma. "
             "Cümleler kısa ve net olsun, gereksiz sıfatlardan kaçın."
-        )
-
-        self._batch_system_prompt = (
-            "Sen tarafsız ve profesyonel bir Türkçe haber editörüsün. "
-            "Sana numaralandırılmış haberler verilecek. Her bir haberi analiz et ve "
-            "her haber için tam olarak 2 akıcı, net ve anlaşılır cümleyle Türkçe özet çıkar. "
-            "Yanıtını SADECE geçerli bir JSON objesi olarak ver, başka hiçbir metin ekleme. "
-            'Format: {"summaries": [{"id": 0, "summary": "..."}, {"id": 1, "summary": "..."}]}'
         )
 
         rotation_enabled = (
@@ -215,7 +210,6 @@ class ResilientSummarizer:
 
             if circuit_breaker.state == "open":
                 if self._rotator:
-                    self._rotator.mark_rate_limited(model, 30.0)
                     self._rotator.next_model()
                 continue
 
@@ -225,7 +219,7 @@ class ResilientSummarizer:
                     extra={"extra_fields": {"event": "groq_rate_limit_failover", "model": model, "attempt": attempt + 1}},
                 )
                 if self._rotator:
-                    self._rotator.mark_rate_limited(model, 10.0)
+                    self._rotator.mark_rate_limited(model, 3.0)
                     self._rotator.next_model()
                 continue
 
@@ -250,18 +244,18 @@ class ResilientSummarizer:
                     success=True,
                     model=model,
                 )
+            except _RateLimitError:
+                logger.warning(
+                    f"Groq 429 on model {model} (HTTP)",
+                    extra={"extra_fields": {"event": "groq_429_http", "model": model}},
+                )
+                if self._rotator:
+                    self._rotator.mark_rate_limited(model, 3.0)
+                    self._rotator.next_model()
+                continue
             except requests.Timeout:
                 return self._fallback("timeout", title, content)
             except requests.HTTPError as e:
-                if e.response is not None and e.response.status_code == 429:
-                    logger.warning(
-                        f"Groq 429 on model {model} (HTTP)",
-                        extra={"extra_fields": {"event": "groq_429_http", "model": model}},
-                    )
-                    if self._rotator:
-                        self._rotator.mark_rate_limited(model, 5.0)
-                        self._rotator.next_model()
-                    continue
                 if e.response is not None and e.response.status_code == 404 and "model_not_found" in e.response.text:
                     logger.warning(f"Groq model unavailable ({model}), failing over")
                     if self._rotator:
@@ -281,96 +275,6 @@ class ResilientSummarizer:
 
         return self._fallback("rate_limit_timeout", title, content)
 
-    def summarize_batch(self, items: List[Tuple[str, str]]) -> List[SummarizeResult]:
-        """
-        Summarize a batch of (title, content) tuples in a SINGLE Groq API call.
-        Retries briefly across models on 429 before falling back.
-        """
-        if not items:
-            return []
-        if len(items) == 1:
-            return [self.summarize(items[0][0], items[0][1])]
-        if not self.groq_api_key or self._groq_permanently_unavailable:
-            return [self.local_summarizer.summarize(t, c) for t, c in items]
-
-        blocks = []
-        for idx, (title, content) in enumerate(items):
-            short_content = _truncate_content(content, max_chars=550)
-            blocks.append(f"[{idx}] Başlık: {title}\nİçerik: {short_content}")
-        user_prompt = "\n\n---\n\n".join(blocks)
-
-        max_rounds = 3  # Tüm modeller doluysa kısa bekleyip 3 tura kadar dene
-        for round_idx in range(max_rounds):
-            for _ in range(len(self._rotation_models)):
-                model = self._rotator.current_model() if self._rotator else self._rotation_models[0]
-
-                if self._rotator and not self._rotator.is_available(model):
-                    self._rotator.next_model()
-                    continue
-
-                rate_limiter = get_groq_rate_limiter(model)
-                circuit_breaker = get_circuit_breaker(f"groq_api:{model}", groq_config=self.groq_config)
-
-                if circuit_breaker.state == "open" or not rate_limiter.acquire(count=1, blocking=False):
-                    if self._rotator:
-                        self._rotator.mark_rate_limited(model, 1.5)
-                        self._rotator.next_model()
-                    continue
-
-                try:
-                    raw_text = self._call_groq_api(
-                        system_prompt=self._batch_system_prompt,
-                        user_prompt=user_prompt,
-                        model=model,
-                        circuit_breaker=circuit_breaker,
-                        max_tokens=max(self.groq_config.max_tokens * len(items), 450),
-                        json_mode=True,
-                    )
-                    cleaned = _clean_groq_summary(raw_text)
-                    parsed = json.loads(cleaned)
-                    summary_map = {
-                        int(entry["id"]): _clean_groq_summary(entry.get("summary", ""))
-                        for entry in parsed.get("summaries", [])
-                        if "id" in entry
-                    }
-
-                    results: List[SummarizeResult] = []
-                    for idx, (title, content) in enumerate(items):
-                        s_text = summary_map.get(idx, "")
-                        if s_text:
-                            results.append(
-                                SummarizeResult(
-                                    summary=s_text,
-                                    engine=f"Groq ({model})",
-                                    success=True,
-                                    model=model,
-                                )
-                            )
-                        else:
-                            results.append(self.local_summarizer.summarize(title, content))
-
-                    if self._rotator:
-                        self._rotator.next_model()
-                    return results
-
-                except requests.HTTPError as e:
-                    if e.response is not None and e.response.status_code == 429:
-                        logger.warning(f"Groq 429 on model {model} (Batch HTTP)")
-                        if self._rotator:
-                            self._rotator.mark_rate_limited(model, 1.5)
-                            self._rotator.next_model()
-                        continue
-                    break
-                except Exception as e:
-                    logger.warning(f"Batch summarize failed on {model} ({e}), falling back to single calls")
-                    break
-
-            # 3 model de bu turda doluysa 1.5 saniye nefes al, TPM penceresi açılsın
-            if round_idx < max_rounds - 1:
-                time.sleep(1.5)
-
-        # Son çare: yerel NLP
-        return [self.local_summarizer.summarize(t, c) for t, c in items]
     def _call_groq_api(
         self,
         system_prompt: str,
@@ -378,7 +282,6 @@ class ResilientSummarizer:
         model: str,
         circuit_breaker,
         max_tokens: int,
-        json_mode: bool = False,
     ) -> str:
         """Low-level Groq HTTP call with circuit breaker and logging."""
         start_time = time.time()
@@ -393,8 +296,6 @@ class ResilientSummarizer:
                 "temperature": self.groq_config.temperature,
                 "max_tokens": max_tokens,
             }
-            if json_mode:
-                payload["response_format"] = {"type": "json_object"}
 
             if model.startswith("qwen/"):
                 payload["reasoning_effort"] = "none"
@@ -425,7 +326,7 @@ class ResilientSummarizer:
                     raise _EmptySummaryError(f"Groq model {model} returned empty content")
                 return content
             elif response.status_code == 429:
-                raise requests.HTTPError(f"Rate limited: {response.text}", response=response)
+                raise _RateLimitError(f"Rate limited: {response.text}")
             elif response.status_code == 401:
                 raise requests.HTTPError(f"Invalid API key: {response.text}", response=response)
             elif response.status_code == 404 and "model_not_found" in response.text:
