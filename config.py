@@ -171,7 +171,7 @@ class GroqConfig:
     max_tokens: int = 512
     request_timeout: int = 8
     # Rate limits for free tier
-    rate_limit_rpm: int = 30
+    rate_limit_rpm: int = 20
     rate_limit_rpd: int = 14400
     # Circuit breaker
     circuit_failure_threshold: int = 5

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import datetime
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Optional
 
 from backend.crawler import fetch_news
@@ -98,11 +99,11 @@ def run_pipeline(
 
     summarization_start = time.time()
     results = []
-    for cluster in clusters:
+
+    def _summarize_cluster(cluster):
         main_art = cluster["main_article"]
         ai_result = summarizer_instance.summarize(main_art["title"], main_art["content"])
-
-        item = {
+        return {
             "title": main_art["title"],
             "source": main_art["source"],
             "category": main_art["category"],
@@ -117,11 +118,18 @@ def run_pipeline(
             "related_count": len(cluster["related_articles"]),
             "related_sources": [r["article"]["source"] for r in cluster["related_articles"]]
         }
-        results.append(item)
+
+    # Paralel özetleme: max_workers = model sayısı (3) veya daha fazla (5-10)
+    # Groq free tier rate limit per model, bu yüzden worker sayısı model sayısına yakın tutulmalı
+    max_workers = min(len(clusters), 3)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [executor.submit(_summarize_cluster, c) for c in clusters]
+        for future in as_completed(futures):
+            results.append(future.result())
 
     summarization_duration = (time.time() - summarization_start) * 1000
     logger.info(
-        f"      -> Özetleme tamamlandı ({summarization_duration:.0f}ms, {len(results)} makale)"
+        f"      -> Özetleme tamamlandı ({summarization_duration:.0f}ms, {len(results)} makale, workers={max_workers})"
     )
 
     # 5. Save to JSON via NewsRepository (atomic write)
