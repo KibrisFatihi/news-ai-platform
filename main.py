@@ -14,6 +14,8 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any,Dict, List, Optional
 from fastapi import BackgroundTasks, FastAPI
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from backend.crawler import fetch_news
 from backend.logger import get_logger, log_pipeline_complete, log_pipeline_start, setup_logging
