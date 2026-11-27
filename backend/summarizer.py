@@ -82,7 +82,7 @@ class ModelRotator:
         self._lock = threading.RLock()
         self._cooldowns: dict[str, float] = {}
 
-    def mark_rate_limited(self, model: str, cooldown_seconds: float = 15.0) -> None:
+    def mark_rate_limited(self, model: str, cooldown_seconds: float = 5.0) -> None:
         """Put a rate-limited model on temporary cooldown so workers skip it."""
         with self._lock:
             self._cooldowns[model] = time.time() + cooldown_seconds
@@ -259,7 +259,7 @@ class ResilientSummarizer:
                         extra={"extra_fields": {"event": "groq_429_http", "model": model}},
                     )
                     if self._rotator:
-                        self._rotator.mark_rate_limited(model, 15.0)
+                        self._rotator.mark_rate_limited(model, 5.0)
                         self._rotator.next_model()
                     continue
                 if e.response is not None and e.response.status_code == 404 and "model_not_found" in e.response.text:
@@ -296,7 +296,7 @@ class ResilientSummarizer:
         # Build compact batch prompt
         blocks = []
         for idx, (title, content) in enumerate(items):
-            short_content = _truncate_content(content, max_chars=1200)
+            short_content = _truncate_content(content, max_chars=600)
             blocks.append(f"[{idx}] Başlık: {title}\nİçerik: {short_content}")
         user_prompt = "\n\n---\n\n".join(blocks)
 
@@ -322,7 +322,7 @@ class ResilientSummarizer:
                     user_prompt=user_prompt,
                     model=model,
                     circuit_breaker=circuit_breaker,
-                    max_tokens=max(self.groq_config.max_tokens * len(items), 800),
+                    max_tokens=max(self.groq_config.max_tokens * len(items), 450),
                     json_mode=True,
                 )
                 cleaned = _clean_groq_summary(raw_text)
@@ -356,7 +356,7 @@ class ResilientSummarizer:
                 if e.response is not None and e.response.status_code == 429:
                     logger.warning(f"Groq 429 on model {model} (Batch HTTP)")
                     if self._rotator:
-                        self._rotator.mark_rate_limited(model, 15.0)
+                        self._rotator.mark_rate_limited(model, 5.0)
                         self._rotator.next_model()
                     continue
                 break
