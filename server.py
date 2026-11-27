@@ -67,7 +67,7 @@ _scheduler_stop_event: Optional[threading.Event] = None
 def _run_background_pipeline():
     """Background task that runs the pipeline periodically."""
     global _scheduler_stop_event
-    interval = get_config().server.scheduler_interval_seconds
+    interval=120
     logger.info(f"🕐 Arka plan zamanlayıcı başlatıldı (her {interval // 60} dakikada bir yenileme)")
 
     while _scheduler_stop_event and not _scheduler_stop_event.is_set():

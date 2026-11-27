@@ -58,6 +58,9 @@ class Article(ArticleBase):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     related_count: int = 0
     related_sources: list[str] = Field(default_factory=list)
+    # Progressive loading fields
+    summary_status: str = "completed"  # "pending" | "completed" | "failed"
+    content_hash: Optional[str] = None  # For delta detection
 
     @field_serializer("updated_at")
     def serialize_updated_at(self, value: datetime) -> str:

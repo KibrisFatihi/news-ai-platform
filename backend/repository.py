@@ -5,19 +5,31 @@ Single point of truth for news feed storage.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import tempfile
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from backend.logger import get_logger
 from backend.models import Article, NewsFeed
 from config import CacheConfig, get_config
 
 logger = get_logger("repository")
+
+
+def _compute_content_hash(title: str, content: str) -> str:
+    """Compute SHA256 hash of title + content for delta detection."""
+    combined = f"{title}|{content}"
+    return hashlib.sha256(combined.encode("utf-8")).hexdigest()[:16]
+
+
+def _get_existing_hashes(articles: NewsFeed) -> Dict[str, str]:
+    """Get mapping of URL -> content_hash from existing articles."""
+    return {a.get("link", ""): a.get("content_hash", "") for a in articles if a.get("link")}
 
 
 class NewsRepository:
@@ -159,6 +171,100 @@ class NewsRepository:
         except Exception:
             logger.error("Transaction failed, changes not saved", extra={"extra_fields": {"event": "repository_transaction_failed"}})
             raise
+
+    def save_progressive(self, articles: NewsFeed) -> NewsFeed:
+        """
+        Progressive save: merge new articles with existing, preserve completed summaries.
+
+        Args:
+            articles: New articles from pipeline (with summary_status="pending" or "completed")
+
+        Returns:
+            Merged article list saved to disk
+        """
+        existing = self.load_or_fallback()
+        existing_hashes = _get_existing_hashes(existing)
+        existing_by_url = {a.get("link", ""): a for a in existing if a.get("link")}
+
+        merged: NewsFeed = []
+        new_count = 0
+        preserved_count = 0
+        updated_count = 0
+
+        for article in articles:
+            url = article.get("link", "")
+            content_hash = _compute_content_hash(article.get("title", ""), article.get("original_content", ""))
+            article["content_hash"] = content_hash
+
+            if url in existing_by_url:
+                existing_article = existing_by_url[url]
+                existing_hash = existing_hashes.get(url, "")
+
+                # Check if existing summary was AI-generated (Groq) vs local NLP
+                ai_engine = existing_article.get("ai_engine", "")
+                is_ai_generated = ai_engine.startswith("Groq") or "Groq" in ai_engine
+
+                if existing_hash == content_hash and existing_article.get("summary_status") == "completed" and is_ai_generated:
+                    # Content unchanged and already summarized with AI - preserve it
+                    merged.append(existing_article)
+                    preserved_count += 1
+                else:
+                    # Content changed, not yet summarized, or was local NLP - use new article (may have pending summary)
+                    merged.append(article)
+                    updated_count += 1
+            else:
+                # Brand new article
+                merged.append(article)
+                new_count += 1
+
+        # Sort by published date descending (newest first)
+        merged.sort(key=lambda x: x.get("published", ""), reverse=True)
+
+        self.save(merged)
+
+        logger.info(
+            f"Progressive save: {new_count} new, {updated_count} updated, {preserved_count} preserved (AI only)",
+            extra={"extra_fields": {
+                "event": "news_feed_progressive_save",
+                "new": new_count,
+                "updated": updated_count,
+                "preserved": preserved_count,
+                "total": len(merged)
+            }}
+        )
+
+        return merged
+
+    def update_article_summaries(self, summaries: List[Dict]) -> int:
+        """
+        Update specific articles with completed summaries.
+
+        Args:
+            summaries: List of dicts with keys: link, summary, ai_engine, ai_model,
+                       summary_status, updated_at
+
+        Returns:
+            Number of articles updated
+        """
+        with self.transaction() as articles:
+            article_by_url = {a.get("link", ""): a for a in articles if a.get("link")}
+            updated = 0
+            for summary in summaries:
+                url = summary.get("link")
+                if url in article_by_url:
+                    article = article_by_url[url]
+                    article["summary"] = summary.get("summary", article.get("summary", ""))
+                    article["ai_engine"] = summary.get("ai_engine", article.get("ai_engine", ""))
+                    article["ai_model"] = summary.get("ai_model", article.get("ai_model", ""))
+                    article["summary_status"] = summary.get("summary_status", "completed")
+                    article["updated_at"] = summary.get("updated_at", article.get("updated_at", ""))
+                    updated += 1
+            return updated
+
+    def get_pending_articles(self) -> List[Dict]:
+        """Get articles that still need summarization."""
+        articles = self.load_or_fallback()
+        return [a for a in articles if a.get("summary_status") == "pending"]
 
 
 # --- Global Repository Instance ---

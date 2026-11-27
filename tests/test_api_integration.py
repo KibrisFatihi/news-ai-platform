@@ -85,7 +85,8 @@ def test_pipeline_with_injected_summarizer():
             )
 
     mock_summarizer = MockSummarizer()
-    results = run_pipeline(api_key=None, max_per_source=1, summarizer=mock_summarizer)
+    # Use progressive=False to force full summarization with the mock (no delta mode)
+    results = run_pipeline(api_key=None, max_per_source=1, summarizer=mock_summarizer, progressive=False)
     assert len(results) > 0
     assert results[0]["ai_engine"] == "Test Engine"
     assert results[0]["summary"] == "Mock özeti"

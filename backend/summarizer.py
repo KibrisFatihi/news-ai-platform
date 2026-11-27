@@ -367,6 +367,235 @@ class ResilientSummarizer:
             model=strategy.model_label,
         )
 
+    def summarize_batch_fixed_model(
+        self,
+        articles: List[tuple[str, str]],
+        model: str,
+    ) -> List[SummarizeResult]:
+        """
+        Summarize multiple articles using a FIXED model (no rotation).
+        Used for sequential model processing mode to avoid 429 storms.
+
+        Args:
+            articles: List of (title, content) tuples
+            model: Specific model to use for all articles
+
+        Returns:
+            List of SummarizeResult in same order as input
+        """
+        if not self.groq_api_key:
+            return [self.local_summarizer.summarize(t, c) for t, c in articles]
+
+        if self._groq_permanently_unavailable:
+            return [self._fallback("circuit_open", t, c) for t, c in articles]
+
+        rate_limiter = get_groq_rate_limiter(model)
+        circuit_breaker = get_circuit_breaker(f"groq_api:{model}", groq_config=self.groq_config)
+
+        if circuit_breaker.state == "open":
+            return [self._fallback("circuit_open", t, c) for t, c in articles]
+
+        results: List[SummarizeResult] = []
+        for title, content in articles:
+            safe_content = _truncate_content(content)
+
+            # Check rate limit before each request
+            if not rate_limiter.acquire(count=1, blocking=False):
+                logger.warning(
+                    f"Groq rate limit hit on model {model} during batch, failing remaining to local",
+                    extra={"extra_fields": {"event": "groq_batch_rate_limit", "model": model, "remaining": len(articles) - len(results)}},
+                )
+                # Fill remaining with local fallback
+                results.extend(self._fallback("rate_limit_timeout", t, c) for t, c in articles[len(results):])
+                break
+
+            try:
+                user_prompt = f"Başlık: {title}\nİçerik: {safe_content}"
+                raw_text = self._call_groq_api(
+                    system_prompt=self._system_prompt,
+                    user_prompt=user_prompt,
+                    model=model,
+                    circuit_breaker=circuit_breaker,
+                    max_tokens=self.groq_config.max_tokens,
+                )
+                summary_text = _clean_groq_summary(raw_text)
+                if not summary_text:
+                    raise _EmptySummaryError(f"Groq model {model} returned empty content")
+
+                results.append(SummarizeResult(
+                    summary=summary_text,
+                    engine=f"Groq ({model})",
+                    success=True,
+                    model=model,
+                ))
+            except _RateLimitError:
+                logger.warning(
+                    f"Groq 429 on model {model} (HTTP) during batch",
+                    extra={"extra_fields": {"event": "groq_batch_429_http", "model": model}},
+                )
+                # Fill remaining with local fallback
+                results.extend(self._fallback("rate_limit_timeout", t, c) for t, c in articles[len(results):])
+                break
+            except requests.Timeout:
+                results.append(self._fallback("timeout", title, content))
+            except requests.HTTPError as e:
+                if e.response is not None and e.response.status_code == 404 and "model_not_found" in e.response.text:
+                    logger.warning(f"Groq model unavailable ({model}), failing batch to local")
+                    results.extend(self._fallback("http_error", t, c) for t, c in articles[len(results):])
+                    break
+                results.append(self._fallback("http_error", title, content))
+            except CircuitOpenError:
+                results.append(self._fallback("circuit_open", title, content))
+            except _EmptySummaryError as e:
+                logger.warning(f"Groq returned empty summary on model {model}: {e}")
+                results.append(self._fallback("unexpected_error", title, content))
+            except Exception:
+                results.append(self._fallback("unexpected_error", title, content))
+
+        return results
+
+    def summarize_sequential_spillover(
+        self,
+        articles: List[tuple[str, str]],
+        models: List[str],
+        max_workers: int = 2,
+        request_delay: float = 0.4,
+        max_tokens: int = 256,
+        max_content_chars: int = 1500,
+    ) -> List[SummarizeResult]:
+        """
+        Sequential Spillover with Parallel Workers:
+        - Distribute articles across max_workers workers
+        - EACH worker tries models in order: model[0] -> model[1] -> model[2]
+        - On 429, worker immediately spills remaining articles to next model
+        - Small delay between requests to respect RPM
+        - Custom token/content limits to stay within TPM
+
+        Args:
+            articles: List of (title, content) tuples
+            models: List of models to try in order (spillover chain)
+            max_workers: Number of parallel workers
+            request_delay: Seconds to sleep between requests (respects RPM)
+            max_tokens: Max tokens per request (TPM protection)
+            max_content_chars: Max chars per article content (TPM protection)
+
+        Returns:
+            List of SummarizeResult in same order as input
+        """
+        if not self.groq_api_key:
+            return [self.local_summarizer.summarize(t, c) for t, c in articles]
+
+        if self._groq_permanently_unavailable:
+            return [self._fallback("circuit_open", t, c) for t, c in articles]
+
+        if not models:
+            models = self._rotation_models
+
+        # Distribute articles round-robin across workers
+        worker_batches: List[List[tuple[int, tuple[str, str]]]] = [[] for _ in range(max_workers)]
+        for idx, article in enumerate(articles):
+            worker_batches[idx % max_workers].append((idx, article))
+
+        all_results: List[SummarizeResult] = [None] * len(articles)
+
+        def _process_worker_batch(batch: List[tuple[int, tuple[str, str]]]) -> List[tuple[int, SummarizeResult]]:
+            """Process a batch with sequential spillover across models."""
+            worker_results: List[tuple[int, SummarizeResult]] = []
+            remaining = [(idx, title, content) for idx, (title, content) in batch]
+
+            for model_idx, model in enumerate(models):
+                if not remaining:
+                    break
+
+                rate_limiter = get_groq_rate_limiter(model)
+                circuit_breaker = get_circuit_breaker(f"groq_api:{model}", groq_config=self.groq_config)
+
+                if circuit_breaker.state == "open":
+                    logger.warning(f"Spillover: circuit open for {model}, skipping to next model")
+                    continue
+
+                next_remaining: List[tuple[int, str, str]] = []
+                for idx, title, content in remaining:
+                    # Rate limit check
+                    if not rate_limiter.acquire(count=1, blocking=False):
+                        logger.warning(
+                            f"Spillover: rate limit hit on {model} ({len(remaining)} remaining), spilling to next model",
+                            extra={"extra_fields": {"event": "spillover_rate_limit", "model": model, "remaining": len(remaining)}},
+                        )
+                        # Spill ALL remaining to next model
+                        next_remaining.extend(remaining)
+                        break
+
+                    # Truncate content for TPM
+                    safe_content = content[:max_content_chars]
+                    last_space = safe_content.rfind(" ")
+                    if last_space > max_content_chars * 0.8:
+                        safe_content = safe_content[:last_space] + "..."
+
+                    try:
+                        user_prompt = f"Başlık: {title}\nİçerik: {safe_content}"
+                        raw_text = self._call_groq_api(
+                            system_prompt=self._system_prompt,
+                            user_prompt=user_prompt,
+                            model=model,
+                            circuit_breaker=circuit_breaker,
+                            max_tokens=max_tokens,
+                        )
+                        summary_text = _clean_groq_summary(raw_text)
+                        if not summary_text:
+                            raise _EmptySummaryError(f"Groq model {model} returned empty content")
+
+                        worker_results.append((idx, SummarizeResult(
+                            summary=summary_text,
+                            engine=f"Groq ({model})",
+                            success=True,
+                            model=model,
+                        )))
+                    except _RateLimitError:
+                        logger.warning(
+                            f"Spillover: 429 on {model} (HTTP), spilling {len(remaining)} remaining to next model",
+                            extra={"extra_fields": {"event": "spillover_429", "model": model, "remaining": len(remaining)}},
+                        )
+                        next_remaining.extend(remaining)
+                        break
+                    except requests.Timeout:
+                        worker_results.append((idx, self._fallback("timeout", title, content)))
+                    except requests.HTTPError as e:
+                        if e.response is not None and e.response.status_code == 404 and "model_not_found" in e.response.text:
+                            logger.warning(f"Spillover: model {model} unavailable, spilling to next")
+                            next_remaining.extend(remaining)
+                            break
+                        worker_results.append((idx, self._fallback("http_error", title, content)))
+                    except CircuitOpenError:
+                        worker_results.append((idx, self._fallback("circuit_open", title, content)))
+                    except _EmptySummaryError as e:
+                        logger.warning(f"Spillover: empty summary on {model}: {e}")
+                        worker_results.append((idx, self._fallback("unexpected_error", title, content)))
+                    except Exception:
+                        worker_results.append((idx, self._fallback("unexpected_error", title, content)))
+
+                    # Small delay between requests to respect RPM
+                    if request_delay > 0:
+                        time.sleep(request_delay)
+
+                remaining = next_remaining
+
+            # Any remaining after all models exhausted -> local fallback
+            for idx, title, content in remaining:
+                worker_results.append((idx, self._fallback("rate_limit_timeout", title, content)))
+
+            return worker_results
+
+        # Run workers in parallel
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [executor.submit(_process_worker_batch, batch) for batch in worker_batches if batch]
+            for future in as_completed(futures):
+                for idx, result in future.result():
+                    all_results[idx] = result
+
+        return all_results
+
 
 # --- Factory Function ---
 

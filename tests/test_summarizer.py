@@ -210,13 +210,11 @@ class TestModelRotation:
 
     def test_rotation_uses_configured_models(self):
         """Rotation models come from config and rotator is wired up."""
+        from config import get_config
+        expected_models = list(get_config().groq.model_rotation)
         summarizer = create_resilient_summarizer(api_key="gsk_test_key")
         assert summarizer._rotator is not None
-        assert summarizer._rotation_models == [
-            "openai/gpt-oss-120b",
-            "openai/gpt-oss-20b",
-            "qwen/qwen3.8-27b",
-        ]
+        assert summarizer._rotation_models == expected_models
 
     def test_round_robin_order_across_articles(self):
         """Consecutive articles hit consecutive models in rotation order."""
@@ -237,7 +235,7 @@ class TestModelRotation:
             summarizer = create_resilient_summarizer(api_key="gsk_test_key")
             results = [
                 summarizer.summarize("Title", f"Content {i}.")
-                for i in range(3)
+                for i in range(len(summarizer._rotation_models))
             ]
 
             assert [r.model for r in results] == summarizer._rotation_models
@@ -259,27 +257,27 @@ class TestModelRotation:
             mock_cb_instance.call.side_effect = lambda f, *a, **kw: f(*a, **kw)
             mock_cb.return_value = mock_cb_instance
 
+            # First model fails with 429, second succeeds
+            models = ["qwen/qwen3.8-27b", "openai/gpt-oss-120b"]
             self._mock_groq(mock_post, [
                 (429, "rate limit exceeded"),
-                (200, "openai/gpt-oss-20b"),
+                (200, models[1]),
             ])
 
             summarizer = create_resilient_summarizer(api_key="gsk_test_key")
             result = summarizer.summarize("Test Title", "Test content here. Another sentence.")
 
             assert result.success is True
-            assert result.model == "openai/gpt-oss-20b"
+            assert result.model == models[1]
             assert "Groq" in result.engine
-            assert self._used_models(mock_post) == [
-                "openai/gpt-oss-120b",
-                "openai/gpt-oss-20b",
-            ]
+            assert self._used_models(mock_post) == models
 
     def test_all_models_429_falls_back_to_local_nlp(self):
         """All models rate-limited -> local NLP fallback, every model tried."""
         with patch("backend.summarizer.get_groq_rate_limiter") as mock_rl, \
              patch("backend.summarizer.get_circuit_breaker") as mock_cb, \
-             patch("backend.summarizer.requests.post") as mock_post:
+             patch("backend.summarizer.requests.post") as mock_post, \
+             patch("backend.summarizer.time.sleep") as mock_sleep:
 
             mock_rl_instance = MagicMock()
             mock_rl_instance.acquire.return_value = True
@@ -289,11 +287,11 @@ class TestModelRotation:
             mock_cb_instance.call.side_effect = lambda f, *a, **kw: f(*a, **kw)
             mock_cb.return_value = mock_cb_instance
 
+            num_models = 3
+            # With mocked sleep, cooldown doesn't expire, so only 1 round = 3 attempts
             self._mock_groq(mock_post, [
                 (429, "rate limit exceeded"),
-                (429, "rate limit exceeded"),
-                (429, "rate limit exceeded"),
-            ])
+            ] * num_models)
 
             summarizer = create_resilient_summarizer(api_key="gsk_test_key")
             result = summarizer.summarize("Test Title", "Test content here. Another sentence.")
@@ -301,13 +299,15 @@ class TestModelRotation:
             assert result.success is False
             assert "Rate Limit" in result.engine
             assert "Yerel NLP" in result.engine
+            # All models tried once (second round skipped due to cooldown)
             assert self._used_models(mock_post) == list(summarizer._rotation_models)
 
     def test_explicit_model_bypasses_rotation(self):
         """``model`` parameter disables rotation; 429 does not try other models."""
         with patch("backend.summarizer.get_groq_rate_limiter") as mock_rl, \
              patch("backend.summarizer.get_circuit_breaker") as mock_cb, \
-             patch("backend.summarizer.requests.post") as mock_post:
+             patch("backend.summarizer.requests.post") as mock_post, \
+             patch("backend.summarizer.time.sleep") as mock_sleep:
 
             mock_rl_instance = MagicMock()
             mock_rl_instance.acquire.return_value = True
@@ -317,7 +317,8 @@ class TestModelRotation:
             mock_cb_instance.call.side_effect = lambda f, *a, **kw: f(*a, **kw)
             mock_cb.return_value = mock_cb_instance
 
-            self._mock_groq(mock_post, [(429, "rate limit exceeded")])
+            # Without rotator, 2 rounds * 1 model = 2 attempts
+            self._mock_groq(mock_post, [(429, "rate limit exceeded")] * 2)
 
             summarizer = create_resilient_summarizer(
                 api_key="gsk_test_key", model="qwen/qwen3.8-27b"
@@ -329,18 +330,22 @@ class TestModelRotation:
 
             assert result.success is False
             assert "Rate Limit" in result.engine
-            assert self._used_models(mock_post) == ["qwen/qwen3.8-27b"]
+            assert self._used_models(mock_post) == ["qwen/qwen3.8-27b"] * 2
 
     def test_rotation_disabled_uses_default_model(self):
         """model_rotation_enabled=False uses a single model, no rotator."""
+        from config import get_config
+        default_model = get_config().groq.default_model
         summarizer = create_resilient_summarizer(
             api_key="gsk_test_key", model_rotation_enabled=False
         )
         assert summarizer._rotator is None
-        assert summarizer.model == "openai/gpt-oss-120b"
-        assert summarizer._rotation_models == ["openai/gpt-oss-120b"]
+        assert summarizer.model == default_model
+        assert summarizer._rotation_models == [default_model]
         # 429 on the only model -> fallback, no other model tried
-        with patch("backend.summarizer.requests.post") as mock_post:
+        # Without rotator, 2 rounds * 1 model = 2 attempts
+        with patch("backend.summarizer.requests.post") as mock_post, \
+             patch("backend.summarizer.time.sleep") as mock_sleep:
             mock_response = MagicMock()
             mock_response.status_code = 429
             mock_response.text = "rate limit exceeded"
@@ -356,7 +361,7 @@ class TestModelRotation:
                 result = summarizer.summarize("Test Title", "Test content here. Another sentence.")
                 assert result.success is False
                 assert "Rate Limit" in result.engine
-                assert mock_post.call_count == 1
+                assert mock_post.call_count == 2  # 2 rounds
 
 
 class TestFallbackChain:
@@ -506,7 +511,7 @@ class TestReasoningModelHandling:
             result = summarizer.summarize("Başlık", "Haber içeriği burada.")
 
             assert result.success is True
-            assert result.model == "qwen/qwen3.8-27b"
+            assert result.model == summarizer._rotation_models[2]
             assert result.summary == "Üçüncü modelden gelen geçerli özet."
 
     def test_all_empty_responses_fall_back_to_local_nlp(self):

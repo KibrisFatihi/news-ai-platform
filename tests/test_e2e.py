@@ -9,6 +9,21 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
+from backend.repository import get_news_repository, reset_news_repository
+
+
+@pytest.fixture(autouse=True)
+def clean_repository():
+    """Clean the news repository before each test."""
+    reset_news_repository()
+    repo = get_news_repository()
+    repo.cleanup()
+    yield
+    # Cleanup after test as well
+    reset_news_repository()
+    repo = get_news_repository()
+    repo.cleanup()
+
 
 @pytest.mark.integration
 class TestFullPipelineE2E:

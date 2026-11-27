@@ -280,6 +280,12 @@
     let currentCategory = 'Tümü';
     let refreshToken = '';
     let inMemoryApiKey = '';
+    let autoRefreshEnabled = true;
+    let autoRefreshInterval = null;
+    let autoRefreshIntervalMs = 30000; // 30 seconds
+    let lastETag = null;
+    let lastModified = null;
+    let pendingCheckInterval = null;
 
     (function setHeaderDate() {
       const el = document.getElementById('currentDateLabel');
@@ -550,10 +556,24 @@
       `).join('');
     }
 
-    async function loadNews() {
+    async function loadNews(silent = false) {
       const grid = document.getElementById('newsGrid');
       try {
-        const res = await fetch('/api/news', { cache: 'no-store' });
+        const headers = { 'Cache-Control': 'no-cache' };
+        if (lastETag) headers['If-None-Match'] = lastETag;
+        if (lastModified) headers['If-Modified-Since'] = lastModified;
+
+        const res = await fetch('/api/news', { headers });
+
+        // Update cache headers for next conditional request
+        lastETag = res.headers.get('ETag') || lastETag;
+        lastModified = res.headers.get('Last-Modified') || lastModified;
+
+        if (res.status === 304) {
+          if (!silent) showToast("Haberler zaten güncel.");
+          return;
+        }
+
         if (!res.ok) {
           throw new Error(`Sunucu hatası: HTTP ${res.status}`);
         }
@@ -562,6 +582,7 @@
           allNews = data.articles;
           updateCounters(allNews);
           renderNews();
+          if (!silent) showToast(`${allNews.length} haber yüklendi.`);
         } else {
           throw new Error(data.error || "Geçersiz API yanıtı");
         }
@@ -574,6 +595,42 @@
           </div>
         `;
       }
+    }
+
+    // Auto-refresh: periodically check for updates via conditional requests
+    function startAutoRefresh() {
+      if (autoRefreshInterval) return;
+      autoRefreshInterval = setInterval(() => {
+        if (autoRefreshEnabled && !document.getElementById('refreshBtn').disabled) {
+          loadNews(true); // silent=true - don't show toast on 304
+        }
+      }, autoRefreshIntervalMs);
+      console.log(`Auto-refresh started (${autoRefreshIntervalMs}ms interval)`);
+    }
+
+    function stopAutoRefresh() {
+      if (autoRefreshInterval) {
+        clearInterval(autoRefreshInterval);
+        autoRefreshInterval = null;
+        console.log("Auto-refresh stopped");
+      }
+    }
+
+    function toggleAutoRefresh() {
+      autoRefreshEnabled = !autoRefreshEnabled;
+      showToast(autoRefreshEnabled ? "Otomatik yenileme açıldı (30 sn)." : "Otomatik yenileme kapatıldı.");
+    }
+
+    // Check for pending summaries and update UI when they complete
+    function startPendingSummaryWatcher() {
+      if (pendingCheckInterval) return;
+      pendingCheckInterval = setInterval(() => {
+        const hasPending = allNews.some(a => a.summary_status === 'pending');
+        if (!hasPending) return;
+
+        // Re-fetch to get completed summaries
+        loadNews(true);
+      }, 5000); // Check every 5 seconds for completed summaries
     }
 
     async function sendRefreshRequest(apiKey) {
@@ -646,6 +703,7 @@
       const leadImg = validImageUrl(lead.image_url);
       const leadLink = safeUrl(lead.link);
       const leadTime = formatTimeLabel(lead.updated_at || lead.published);
+      const leadPending = lead.summary_status === 'pending';
 
       heroEl.classList.remove('hidden');
       heroEl.innerHTML = `
@@ -659,14 +717,15 @@
 
         <div class="grid grid-cols-1 lg:grid-cols-12 gap-5">
           <!-- Ana Manşet -->
-          <article class="lg:col-span-7 bg-white border border-stone-200/90 rounded-md shadow-[0_1px_2px_rgba(0,0,0,0.03)] overflow-hidden flex flex-col justify-between group">
+          <article class="lg:col-span-7 bg-white border border-stone-200/90 rounded-md shadow-[0_1px_2px_rgba(0,0,0,0.03)] overflow-hidden flex flex-col justify-between group ${leadPending ? 'ring-2 ring-amber-300' : ''}">
             ${leadImg ? `
-              <div class="news-thumb-wrap aspect-[16/9] w-full bg-stone-100 overflow-hidden border-b border-stone-200">
+              <div class="news-thumb-wrap aspect-[16/9] w-full bg-stone-100 overflow-hidden border-b border-stone-200 relative">
                 <a href="${leadLink}" target="_blank" rel="noopener noreferrer" class="block w-full h-full">
                   <img src="${esc(leadImg)}" alt="${esc(lead.title)}" loading="eager"
                     onerror="this.closest('.news-thumb-wrap').remove()"
                     class="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-300" />
                 </a>
+                ${leadPending ? '<div class="absolute inset-0 bg-amber-50/50 flex items-center justify-center"><span class="text-xs font-bold text-amber-800 px-2 py-1 bg-white/90 rounded">Özet hazırlanıyor...</span></div>' : ''}
               </div>
             ` : ''}
             <div class="p-5 sm:p-6 flex-1 flex flex-col justify-between">
@@ -688,7 +747,7 @@
                 </h3>
 
                 <p class="text-sm text-stone-600 leading-relaxed mb-4">
-                  ${esc(lead.summary)}
+                  ${leadPending ? '<em class="text-amber-700 italic">Özet hazırlanıyor, lütfen bekleyin...</em>' : esc(lead.summary)}
                 </p>
               </div>
 
@@ -713,8 +772,9 @@
               const img = validImageUrl(item.image_url);
               const link = safeUrl(item.link);
               const tLabel = formatTimeLabel(item.updated_at || item.published);
+              const pending = item.summary_status === 'pending';
               return `
-                <article class="bg-white border border-stone-200/90 rounded-md shadow-[0_1px_2px_rgba(0,0,0,0.03)] p-4 sm:p-5 flex-1 flex flex-col justify-between group hover:bg-[#FAF8F5]/60 transition-colors">
+                <article class="bg-white border border-stone-200/90 rounded-md shadow-[0_1px_2px_rgba(0,0,0,0.03)] p-4 sm:p-5 flex-1 flex flex-col justify-between group hover:bg-[#FAF8F5]/60 transition-colors ${pending ? 'ring-1 ring-amber-300' : ''}">
                   <div class="flex gap-4 items-start">
                     <div class="flex-1 min-w-0">
                       <div class="flex flex-wrap items-center gap-1.5 text-[10px] uppercase tracking-wider text-stone-500 mb-1.5">
@@ -728,14 +788,15 @@
                         </a>
                       </h3>
                       <p class="text-xs text-stone-600 leading-relaxed line-clamp-3">
-                        ${esc(item.summary)}
+                        ${pending ? '<em class="text-amber-700 italic">Özet hazırlanıyor...</em>' : esc(item.summary)}
                       </p>
                     </div>
                     ${img ? `
-                      <div class="news-thumb-wrap w-24 sm:w-28 aspect-[4/3] shrink-0 bg-stone-100 rounded overflow-hidden border border-stone-200">
+                      <div class="news-thumb-wrap w-24 sm:w-28 aspect-[4/3] shrink-0 bg-stone-100 rounded overflow-hidden border border-stone-200 relative">
                         <img src="${esc(img)}" alt="${esc(item.title)}" loading="lazy"
                           onerror="this.closest('.news-thumb-wrap').remove()"
                           class="w-full h-full object-cover" />
+                        ${pending ? '<div class="absolute inset-0 bg-amber-50/50 flex items-center justify-center"><span class="text-[9px] font-bold text-amber-800 px-1.5 py-0.5 bg-white/90 rounded">Bekliyor</span></div>' : ''}
                       </div>
                     ` : ''}
                   </div>
@@ -839,6 +900,16 @@
         return matchesCat && matchesSearch;
       });
 
+      // Show pending indicator in header
+      const pendingCount = allNews.filter(a => a.summary_status === 'pending').length;
+      const completedCount = allNews.filter(a => a.summary_status === 'completed').length;
+      if (pendingCount > 0) {
+        const badge = document.getElementById('activeEngineBadge');
+        if (badge && !badge.innerHTML.includes('pending')) {
+          badge.innerHTML += `<span class="ml-2 px-1.5 py-0.5 bg-amber-100 text-amber-800 text-[10px] font-bold rounded">${pendingCount} özet bekleniyor...</span>`;
+        }
+      }
+
       if (feedHeading) {
         feedHeading.innerText = currentCategory === 'Tümü' ? 'Gündem Akışı' : currentCategory;
       }
@@ -889,9 +960,10 @@
         const safeLink = safeUrl(item.link);
         const imgUrl = validImageUrl(item.image_url);
         const timeLabel = formatTimeLabel(item.updated_at || item.published);
+        const pending = item.summary_status === 'pending';
 
         return `
-        <article class="p-5 sm:p-6 hover:bg-[#FAF8F5] transition-colors group">
+        <article class="p-5 sm:p-6 hover:bg-[#FAF8F5] transition-colors group ${pending ? 'ring-1 ring-amber-300' : ''}">
           <div class="flex flex-col sm:flex-row gap-4 sm:gap-5 items-start">
             <div class="flex-1 min-w-0">
               <!-- Üst Meta Veriler -->
@@ -900,6 +972,7 @@
                   <span class="font-bold text-[#B91C1C]">${esc(item.source)}</span>
                   <span class="text-stone-300">•</span>
                   <span class="font-medium text-stone-700">${esc(item.category)}</span>
+                  ${pending ? '<span class="px-1.5 py-0.5 bg-amber-100 text-amber-800 text-[10px] font-bold rounded animate-pulse">Özet bekleniyor</span>' : ''}
                 </div>
                 <div class="flex items-center gap-2 text-stone-400">
                   <time>${esc(timeLabel)}</time>
@@ -915,7 +988,7 @@
 
               <!-- Özet Metni -->
               <p class="text-sm text-stone-600 leading-relaxed mb-3.5">
-                ${esc(item.summary)}
+                ${pending ? '<em class="text-amber-700 italic">Özet hazırlanıyor, lütfen sayfa yenileyin...</em>' : esc(item.summary)}
               </p>
 
               <!-- Alt Satır: Çoklu Kaynak ve Doğrudan Kaynak Linki -->
@@ -936,10 +1009,11 @@
             </div>
 
             ${imgUrl ? `
-              <a href="${safeLink}" target="_blank" rel="noopener noreferrer" class="news-thumb-wrap w-full sm:w-44 md:w-48 aspect-[16/10] shrink-0 bg-stone-100 rounded overflow-hidden border border-stone-200 block">
+              <a href="${safeLink}" target="_blank" rel="noopener noreferrer" class="news-thumb-wrap w-full sm:w-44 md:w-48 aspect-[16/10] shrink-0 bg-stone-100 rounded overflow-hidden border border-stone-200 block relative">
                 <img src="${esc(imgUrl)}" alt="${esc(item.title)}" loading="lazy"
                   onerror="this.closest('.news-thumb-wrap').remove()"
                   class="w-full h-full object-cover group-hover:scale-[1.03] transition-transform duration-300" />
+                ${pending ? '<div class="absolute inset-0 bg-amber-50/50 flex items-center justify-center"><span class="text-xs font-bold text-amber-800 px-2 py-1 bg-white/90 rounded">Özet bekleniyor</span></div>' : ''}
               </a>
             ` : ''}
           </div>
@@ -965,6 +1039,21 @@
     fetchRefreshToken();
     loadWeather();
     loadNews();
+
+    // Start auto-refresh and pending summary watcher
+    startAutoRefresh();
+    startPendingSummaryWatcher();
+
+    // Pause auto-refresh when tab is hidden, resume when visible
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        stopAutoRefresh();
+      } else {
+        startAutoRefresh();
+        // Check immediately when tab becomes visible
+        loadNews(true);
+      }
+    });
   </script>
 </body>
 </html>

@@ -176,7 +176,7 @@ class GroqConfig:
     # Circuit breaker
     circuit_failure_threshold: int = 5
     circuit_timeout_seconds: int = 60
-    # Model rotation - Grok rate limits are per-model, so rotating across
+    # Model rotation - Groq rate limits are per-model, so rotating across
     # models multiplies effective free-tier capacity (approx. N models x limits).
     # When enabled and no explicit model is chosen, articles are round-robined
     # across these models and a 429 on one model fails over to the next.
@@ -185,8 +185,23 @@ class GroqConfig:
         "qwen/qwen3.8-27b",
         "openai/gpt-oss-120b",
         "openai/gpt-oss-20b",
-        
+
     ])
+    # Sequential model processing: process ALL articles with model 1, then model 2, etc.
+    # Avoids hammering all models simultaneously (prevents 429 storms).
+    # Trade-off: longer total time but much higher success rate per model.
+    sequential_model_processing: bool = False
+
+    # Hybrid Sequential Spillover Mode:
+    # - max_workers parallel workers, EACH uses sequential spillover across models
+    # - Worker starts with model[0], on 429 spills remaining to model[1], then model[2]
+    # - Small delay between requests (0.3-0.5s) to respect RPM
+    # - Reduced max_tokens and content truncation to stay within TPM
+    sequential_spillover_enabled: bool = True
+    spillover_max_workers: int = 2
+    spillover_request_delay: float = 0.4  # seconds between requests
+    spillover_max_tokens: int = 256
+    spillover_max_content_chars: int = 1500
 
 
 @dataclass(frozen=True)
