@@ -30,6 +30,9 @@
 </head>
 <body class="min-h-screen flex flex-col justify-between selection:bg-red-700 selection:text-white">
 
+  <!-- Skip to content (erişilebilirlik) -->
+  <a href="#mainContent" class="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-50 focus:px-4 focus:py-2 focus:bg-[#B91C1C] focus:text-white focus:rounded">İçeriğe atla</a>
+
   <!-- Üst Kırmızı Editoryal Şerit -->
   <div class="bg-[#991B1B] text-red-50 text-[11px] tracking-wider uppercase py-1.5 px-4">
     <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2">
@@ -38,7 +41,7 @@
         <span class="text-red-300/60">|</span>
         <span><strong id="totalNewsCount" class="text-white font-bold">0</strong> HABER</span>
         <span class="text-red-300/60">|</span>
-        <span><strong id="sourceCount" class="text-white font-bold">21</strong> KAYNAK</span>
+        <span><strong id="sourceCount" class="text-white font-bold">20</strong> KAYNAK</span>
       </div>
       <div class="flex items-center gap-3">
         <span id="headerWeatherMini" class="hidden sm:inline-flex items-center gap-2 text-red-100/90 font-medium"></span>
@@ -63,10 +66,12 @@
         <!-- Arama ve Aksiyon Butonları -->
         <div class="flex items-center gap-2">
           <div class="relative flex-1 sm:w-64">
-            <input 
+            <input
               id="searchInput"
-              type="text" 
-              placeholder="Başlık veya özet ara..." 
+              type="text"
+              placeholder="Başlık veya özet ara..."
+              aria-label="Haber ara (başlık, özet, içerik, kaynak)"
+              aria-controls="newsGrid"
               class="w-full pl-8 pr-3 py-2 text-xs bg-white border border-stone-300 rounded text-stone-900 placeholder-stone-400 focus:outline-none focus:border-[#B91C1C] transition-colors"
             />
             <svg class="w-3.5 h-3.5 text-stone-400 absolute left-2.5 top-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -74,16 +79,17 @@
             </svg>
           </div>
 
-          <button 
-            onclick="toggleKeyModal()" 
-            title="Groq API Anahtarı Ayarları"
+          <button
+            onclick="toggleKeyModal()"
+            aria-label="Groq API Anahtarı Ayarları"
             class="px-3 py-2 text-xs font-medium text-stone-700 bg-white border border-stone-300 rounded hover:border-[#B91C1C] hover:text-[#B91C1C] transition-colors">
             API Ayarı
           </button>
 
-          <button 
+          <button
             id="refreshBtn"
-            onclick="triggerRefresh()" 
+            onclick="triggerRefresh()"
+            aria-label="Haber akışını yenile"
             class="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-[#B91C1C] rounded hover:bg-[#991B1B] active:bg-red-950 transition-colors">
             <svg id="refreshIcon" class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
@@ -94,24 +100,24 @@
       </div>
 
       <!-- Kategori Sekmeleri -->
-      <nav class="flex items-center gap-6 overflow-x-auto no-scrollbar border-t border-stone-200 text-xs font-medium" id="categoryFilters">
-        <button onclick="filterCategory('Tümü')" class="cat-btn py-3 border-b-2 border-[#B91C1C] text-[#B91C1C] font-bold whitespace-nowrap transition-colors">Tümü</button>
-        <button onclick="filterCategory('Savunma & Teknoloji')" class="cat-btn py-3 border-b-2 border-transparent text-stone-600 hover:text-[#B91C1C] whitespace-nowrap transition-colors">Savunma & Teknoloji</button>
-        <button onclick="filterCategory('Bilim')" class="cat-btn py-3 border-b-2 border-transparent text-stone-600 hover:text-[#B91C1C] whitespace-nowrap transition-colors">Bilim</button>
-        <button onclick="filterCategory('Ekonomi')" class="cat-btn py-3 border-b-2 border-transparent text-stone-600 hover:text-[#B91C1C] whitespace-nowrap transition-colors">Ekonomi</button>
-        <button onclick="filterCategory('Politika & Gündem')" class="cat-btn py-3 border-b-2 border-transparent text-stone-600 hover:text-[#B91C1C] whitespace-nowrap transition-colors">Politika & Gündem</button>
-        <button onclick="filterCategory('Dünya')" class="cat-btn py-3 border-b-2 border-transparent text-stone-600 hover:text-[#B91C1C] whitespace-nowrap transition-colors">Dünya</button>
-        <button onclick="filterCategory('Spor')" class="cat-btn py-3 border-b-2 border-transparent text-stone-600 hover:text-[#B91C1C] whitespace-nowrap transition-colors">Spor</button>
-        <button onclick="filterCategory('Genel Gündem')" class="cat-btn py-3 border-b-2 border-transparent text-stone-600 hover:text-[#B91C1C] whitespace-nowrap transition-colors">Genel Gündem</button>
+      <nav aria-label="Kategori filtresi" class="flex items-center gap-6 overflow-x-auto no-scrollbar border-t border-stone-200 text-xs font-medium" id="categoryFilters">
+        <button onclick="filterCategory('Tümü')" aria-label="Tüm kategoriler" class="cat-btn py-3 border-b-2 border-[#B91C1C] text-[#B91C1C] font-bold whitespace-nowrap transition-colors">Tümü</button>
+        <button onclick="filterCategory('Savunma & Teknoloji')" aria-label="Savunma ve Teknoloji kategorisi" class="cat-btn py-3 border-b-2 border-transparent text-stone-600 hover:text-[#B91C1C] whitespace-nowrap transition-colors">Savunma & Teknoloji</button>
+        <button onclick="filterCategory('Bilim')" aria-label="Bilim kategorisi" class="cat-btn py-3 border-b-2 border-transparent text-stone-600 hover:text-[#B91C1C] whitespace-nowrap transition-colors">Bilim</button>
+        <button onclick="filterCategory('Ekonomi')" aria-label="Ekonomi kategorisi" class="cat-btn py-3 border-b-2 border-transparent text-stone-600 hover:text-[#B91C1C] whitespace-nowrap transition-colors">Ekonomi</button>
+        <button onclick="filterCategory('Politika & Gündem')" aria-label="Politika ve Gündem kategorisi" class="cat-btn py-3 border-b-2 border-transparent text-stone-600 hover:text-[#B91C1C] whitespace-nowrap transition-colors">Politika & Gündem</button>
+        <button onclick="filterCategory('Dünya')" aria-label="Dünya kategorisi" class="cat-btn py-3 border-b-2 border-transparent text-stone-600 hover:text-[#B91C1C] whitespace-nowrap transition-colors">Dünya</button>
+        <button onclick="filterCategory('Spor')" aria-label="Spor kategorisi" class="cat-btn py-3 border-b-2 border-transparent text-stone-600 hover:text-[#B91C1C] whitespace-nowrap transition-colors">Spor</button>
+        <button onclick="filterCategory('Genel Gündem')" aria-label="Genel Gündem kategorisi" class="cat-btn py-3 border-b-2 border-transparent text-stone-600 hover:text-[#B91C1C] whitespace-nowrap transition-colors">Genel Gündem</button>
       </nav>
     </div>
   </header>
 
   <!-- Ana İçerik Alanı -->
-  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-7 w-full flex-1">
+  <main id="mainContent" class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-7 w-full flex-1" tabindex="-1" aria-label="Haber akışı ve özetler">
 
     <!-- Bildirim Çubuğu -->
-    <div id="toastMessage" class="hidden mb-6 px-4 py-3 bg-white border-l-4 border-[#B91C1C] border-y border-r border-stone-200 text-stone-800 text-xs flex items-center justify-between">
+    <div id="toastMessage" class="hidden mb-6 px-4 py-3 bg-white border-l-4 border-[#B91C1C] border-y border-r border-stone-200 text-stone-800 text-xs flex items-center justify-between" aria-live="polite" aria-atomic="true">
       <span id="toastText" class="font-medium">İşlem tamamlandı.</span>
       <button onclick="hideToast()" class="text-stone-400 hover:text-[#B91C1C] font-semibold ml-4">Kapat</button>
     </div>
@@ -184,6 +190,16 @@
             <h3 class="text-xs font-bold uppercase tracking-wider text-stone-900">Kategori Dağılımı</h3>
           </div>
           <div id="categoryBody" class="p-4 flex flex-wrap gap-1.5">
+            <span class="text-xs text-stone-400">Yükleniyor...</span>
+          </div>
+        </div>
+
+        <!-- Kaynak Filtresi -->
+        <div id="sourceWidget" class="bg-white border border-stone-200/90 rounded-md shadow-[0_1px_2px_rgba(0,0,0,0.03)] overflow-hidden mt-3">
+          <div class="px-4 py-3 border-b border-stone-200 bg-[#FAF8F5]/70">
+            <h3 class="text-xs font-bold uppercase tracking-wider text-stone-900">Kaynak Filtresi</h3>
+          </div>
+          <div id="sourceBody" class="p-4 flex flex-wrap gap-1.5">
             <span class="text-xs text-stone-400">Yükleniyor...</span>
           </div>
         </div>
@@ -278,6 +294,7 @@
     let allNews = [];
     let weatherData = null;
     let currentCategory = 'Tümü';
+    let currentSource = 'Tümü';
     let refreshToken = '';
     let inMemoryApiKey = '';
     let autoRefreshEnabled = true;
@@ -388,7 +405,7 @@
       }
 
       if (val) {
-        showToast("Groq API anahtarı kaydedildi. Yenileme sırasında LLaMA 3.3 kullanılacak.");
+        showToast("Groq API anahtarı kaydedildi. Yenileme sırasında Groq modeli kullanılacak.");
       } else {
         showToast("API anahtarı temizlendi. Otomatik özetleme aktif.");
       }
@@ -616,12 +633,7 @@
       }
     }
 
-    function toggleAutoRefresh() {
-      autoRefreshEnabled = !autoRefreshEnabled;
-      showToast(autoRefreshEnabled ? "Otomatik yenileme açıldı (30 sn)." : "Otomatik yenileme kapatıldı.");
-    }
-
-    // Check for pending summaries and update UI when they complete
+// Check for pending summaries and update UI when they complete
     function startPendingSummaryWatcher() {
       if (pendingCheckInterval) return;
       pendingCheckInterval = setInterval(() => {
@@ -818,6 +830,7 @@
       const trendingBody = document.getElementById('trendingBody');
       const latestBody = document.getElementById('latestBody');
       const categoryBody = document.getElementById('categoryBody');
+      const sourceBody = document.getElementById('sourceBody');
 
       if (trendingBody) {
         const multiSource = [...articles]
@@ -885,6 +898,29 @@
           `).join('');
         }
       }
+
+      // Kaynak filtresi chip'leri (sol kenar çubuğu değil, yan çubukta)
+      if (sourceBody) {
+        const srcCounts = {};
+        articles.forEach(a => {
+          const s = a.source || 'Bilinmeyen';
+          srcCounts[s] = (srcCounts[s] || 0) + 1;
+        });
+        const srcEntries = Object.entries(srcCounts).sort((a, b) => b[1] - a[1]).slice(0, 12);
+        if (srcEntries.length === 0) {
+          sourceBody.innerHTML = `<span class="text-xs text-stone-400">Kaynak yok.</span>`;
+        } else {
+          sourceBody.innerHTML = [
+            `<button onclick="filterSource('Tümü')" class="px-2.5 py-1 text-[11px] rounded border ${currentSource === 'Tümü' ? 'bg-[#B91C1C] text-white border-[#B91C1C]' : 'bg-[#FAF8F5] text-stone-700 border-stone-200 hover:border-[#B91C1C] hover:text-[#B91C1C]'} transition-colors">Tümü</button>`,
+            ...srcEntries.map(([src, count]) => `
+              <button onclick="filterSource('${esc(src).replace(/'/g, "\\'")}')"
+                class="px-2.5 py-1 text-[11px] rounded border ${currentSource === src ? 'bg-[#B91C1C] text-white border-[#B91C1C]' : 'bg-[#FAF8F5] text-stone-700 border-stone-200 hover:border-[#B91C1C] hover:text-[#B91C1C]'} transition-colors truncate max-w-[120px]">
+                ${esc(src)} <span class="opacity-75">(${count})</span>
+              </button>
+            `)
+          ].join('');
+        }
+      }
     }
 
     function renderNews() {
@@ -895,9 +931,15 @@
 
       const filtered = allNews.filter(item => {
         const matchesCat = currentCategory === 'Tümü' || item.category === currentCategory;
-        const matchesSearch = (item.title || '').toLowerCase().includes(searchTerm) ||
-                              (item.summary || '').toLowerCase().includes(searchTerm);
-        return matchesCat && matchesSearch;
+        const matchesSrc = currentSource === 'Tümü' || item.source === currentSource;
+        const haystack = [
+          item.title || '',
+          item.summary || '',
+          item.content || item.original_content || '',
+          item.source || '',
+        ].join(' ').toLowerCase();
+        const matchesSearch = haystack.includes(searchTerm);
+        return matchesCat && matchesSrc && matchesSearch;
       });
 
       // Show pending indicator in header
@@ -1030,6 +1072,11 @@
           btn.className = 'cat-btn py-3 border-b-2 border-transparent text-stone-600 hover:text-[#B91C1C] whitespace-nowrap transition-colors';
         }
       });
+      renderNews();
+    }
+
+    function filterSource(src) {
+      currentSource = src;
       renderNews();
     }
 

@@ -18,7 +18,7 @@ from backend.logger import get_logger, log_groq_call
 from backend.models import SummarizeResult
 from backend.nlp_engine import extractive_summarize
 from backend.rate_limiter import get_groq_rate_limiter
-from config import GroqConfig, get_config
+from config import GroqConfig, get_config, validate_model_id
 
 logger = get_logger("summarizer")
 
@@ -195,6 +195,11 @@ class ResilientSummarizer:
             self.model = rotation_models[0] if rotation_models else cfg.default_model
             self._rotation_models = [self.model]
             self._rotator = None
+
+        # Model ID whitelist doğrulaması — sadece izinli model ID'ler kabul edilir
+        for m in self._rotation_models:
+            if not validate_model_id(m):
+                raise ValueError(f"İzinli olmayan model ID: {m}")
 
     def summarize(self, title: str, content: str) -> SummarizeResult:
         """Summarize a single article with full resilience and short cooldown recovery."""

@@ -38,10 +38,10 @@ class RSSFeedConfig:
     user_agent: str = "NewsAIPlatform/2.0 (+https://github.com/news-ai-platform)"
 
 
-# Pre-compile category keyword patterns at module load (not lazy)
-# This avoids first-request latency and ensures patterns are ready.
-_CATEGORY_PATTERNS: dict[str, list[Pattern]] = {}
-for _cat, _kws in {
+# Tek kaynak: kategori anahtar kelime listesi.
+# Hem _CATEGORY_PATTERNS (derlenmiş regex) hem de
+# NLPConfig.category_keywords (ham liste) bu tanımdan üretilir.
+_CATEGORY_KEYWORDS: dict[str, list[str]] = {
     "Savunma & Teknoloji": [
         "kızılelma", "envanter", "siber", "roket", "siha", "iha", "uydu",
         "drone", "füze", "radar", "savunma", "askeri", "mühimmat",
@@ -82,7 +82,12 @@ for _cat, _kws in {
         "trabzonspor", "basketbol", "voleybol", "tenis", "formula 1",
         "teknik direktör", "derbi", "şampiyonlar ligi", "nba", "euroleague",
     ],
-}.items():
+}
+
+# Pre-compile category keyword patterns at module load (not lazy)
+# This avoids first-request latency and ensures patterns are ready.
+_CATEGORY_PATTERNS: dict[str, list[Pattern]] = {}
+for _cat, _kws in _CATEGORY_KEYWORDS.items():
     _patterns = []
     for _kw in _kws:
         if _kw == "deney":
@@ -110,48 +115,8 @@ class NLPConfig:
     }))
 
     # Category keywords - Title gets 2x weight in classification
-    category_keywords: dict[str, list[str]] = field(default_factory=lambda: {
-        "Savunma & Teknoloji": [
-            "kızılelma", "envanter", "siber", "roket", "siha", "iha", "uydu",
-            "drone", "füze", "radar", "savunma", "askeri", "mühimmat",
-            "yapay zeka", "teknoloji", "algoritma", "model", "yazılım",
-            "veri", "bulut", "siber güvenlik", "şifreleme", "blockchain",
-            "işlemci", "ekran kartı", "apple", "google", "microsoft", "nvidia",
-            "openai", "telefon", "güncelleme", "oyun", "elektrikli araç",
-            "startup", "girişim", "uygulama", "donanım", "hacker", "siber saldırı", "veri sızıntısı",
-        ],
-        "Bilim": [
-            "bilim", "uzay", "nasa", "evrim", "deney", "araştırma",
-            "kuantum", "biyoloji", "fizik", "gezegen", "teleskop",
-            "iklim", "keşif", "fosil", "genetik", "molekül", "astronomi",
-        ],
-        "Ekonomi": [
-            "dolar", "enflasyon", "faiz", "para", "fon", "banka", "piyasa", "borsa",
-            "maaş", "zam", "ekonomi", "bütçe", "tüfe", "ithalat", "ihracat", "cari açık",
-            "tl", "kur", "merkez bankası", "faiz kararı", "enflasyon verisi",
-            "gsyh", "işsizlik", "asgari ücret", "emekli", "sgk", "vergi",
-            "altın", "petrol", "kredi", "yatırım", "hisse",
-            "üst düzey", "genel müdür", "yönetim kurulu", "ceo",
-        ],
-        "Politika & Gündem": [
-            "parti", "seçim", "belediye", "hükümet", "meclis", "başkan", "ak parti",
-            "chp", "tbmm", "eylem", "miting", "oy", "sandık", "yargı", "anayasa",
-            "milletvekili", "kanun", "teklif", "yasa", "genel kurul",
-            "başbakan", "bakan", "kabine", "cumhurbaşkanı", "mahkeme", "soruşturma",
-        ],
-        "Dünya": [
-            "uluslararası", "divan", "myanmar", "israil", "gazze", "abd", "rusya",
-            "ukrayna", "ab", "avrupa", "soykırım", "nato", "bm", "barış", "savaş",
-            "çin", "hindistan", "japonya", "kore", "orta doğu", "afrika",
-            "brics", "g20", "bm güvenlik konseyi", "antlaşma", "diplomasi",
-        ],
-        "Spor": [
-            "futbol", "maç", "gol", "lig", "galatasaray", "fenerbahçe", "beşiktaş",
-            "şampiyon", "transfer", "kupa", "kupası", "milli takım", "süper lig",
-            "trabzonspor", "basketbol", "voleybol", "tenis", "formula 1",
-            "teknik direktör", "derbi", "şampiyonlar ligi", "nba", "euroleague",
-        ],
-    })
+    # Tek kaynaktan üretilir (_CATEGORY_KEYWORDS).
+    category_keywords: dict[str, list[str]] = field(default_factory=lambda: dict(_CATEGORY_KEYWORDS))
 
     # Pre-compiled regex patterns for each category (built at module load)
     default_category: str = "Genel Gündem"
@@ -209,8 +174,13 @@ class ServerConfig:
     """HTTP Server configuration."""
     port: int = int(os.getenv("PORT", "8000"))
     host: str = "0.0.0.0"
-    # CORS
-    cors_allowed_origins: list[str] = field(default_factory=lambda: ["*"])
+    # CORS — Render environment üzerinden override edilebilir;
+    # varsayılan olarak tüm originlere izin verilir (*).
+    cors_allowed_origins: list[str] = field(
+        default_factory=lambda: os.getenv("CORS_ALLOWED_ORIGINS", "*").split(",")
+        if os.getenv("CORS_ALLOWED_ORIGINS")
+        else ["*"]
+    )
     cors_allowed_methods: list[str] = field(default_factory=lambda: ["GET", "POST", "OPTIONS"])
     cors_allowed_headers: list[str] = field(default_factory=lambda: [
         "Content-Type", "Authorization", "X-Groq-Api-Key", "X-Refresh-Token"
@@ -223,9 +193,9 @@ class ServerConfig:
     # Static files
     static_dir: str = "frontend"
     index_file: str = "index.html"
-    # Rate limiting for /api/refresh
-    refresh_rate_limit_window: int = 60
-    refresh_rate_limit_max: int = 5
+    # Rate limiting for /api/refresh — 10 dakikada 1 istek
+    refresh_rate_limit_window: int = 600
+    refresh_rate_limit_max: int = 1
     # Background scheduler
     scheduler_interval_seconds: int = 30 * 60  # 30 minutes
     # Pipeline timeout
@@ -285,6 +255,37 @@ config = AppConfig()
 def get_config() -> AppConfig:
     """Get the global configuration instance."""
     return config
+
+
+# --- Model ID doğrulama ---
+
+ALLOWED_MODEL_IDS: set[str] = set()
+
+def _build_allowed_model_ids() -> set[str]:
+    """GroqConfig.model_rotation listesinden izin verilen model ID setini derler."""
+    ids = set()
+    cfg = get_config()
+    for m in cfg.groq.model_rotation:
+        if m:
+            ids.add(m.strip())
+    ids.add(cfg.groq.default_model)
+    ids.add(cfg.groq.fast_model)
+    return ids
+
+
+ALLOWED_MODEL_IDS = _build_allowed_model_ids()
+
+
+def validate_model_id(model_id: str) -> bool:
+    """Verilen model ID'nin izinli listedede olup olmadığını döner.
+
+    Sunucu tarafında model id whitelist koruması için kullanılır.
+    Kullanıcının rastgele bir model id göndermesini engellemek için
+    refresh/summarization giriş noktalarında çağrılmalı.
+    """
+    if not model_id or not isinstance(model_id, str):
+        return False
+    return model_id.strip() in ALLOWED_MODEL_IDS
 
 
 # For backwards compatibility and easy imports

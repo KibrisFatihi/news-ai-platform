@@ -5,12 +5,15 @@ Single point of truth for news feed storage.
 """
 from __future__ import annotations
 
+import email.utils
 import hashlib
 import json
 import os
 import tempfile
+import threading
 import time
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
@@ -30,6 +33,29 @@ def _compute_content_hash(title: str, content: str) -> str:
 def _get_existing_hashes(articles: NewsFeed) -> Dict[str, str]:
     """Get mapping of URL -> content_hash from existing articles."""
     return {a.get("link", ""): a.get("content_hash", "") for a in articles if a.get("link")}
+
+
+def _parse_published_date(item: Dict[str, Any]) -> datetime:
+    """Parse RFC-822 ``published`` date string to a timezone-aware datetime.
+
+    Falls back to the current UTC time when the value is missing or cannot be
+    parsed, so unparseable dates always sort as "now" instead of crashing.
+    """
+    raw = item.get("published") or ""
+    if not raw:
+        return datetime.now(timezone.utc)
+    try:
+        dt = email.utils.parsedate_to_datetime(raw)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except (TypeError, ValueError, IndexError):
+        return datetime.now(timezone.utc)
+
+
+# Global repository-level lock to serialize writes between the background
+# scheduler and /api/refresh, preventing concurrent file corruption.
+_repo_lock = threading.Lock()
 
 
 class NewsRepository:
@@ -182,45 +208,47 @@ class NewsRepository:
         Returns:
             Merged article list saved to disk
         """
-        existing = self.load_or_fallback()
-        existing_hashes = _get_existing_hashes(existing)
-        existing_by_url = {a.get("link", ""): a for a in existing if a.get("link")}
+        with _repo_lock:
+            existing = self.load_or_fallback()
+            existing_hashes = _get_existing_hashes(existing)
+            existing_by_url = {a.get("link", ""): a for a in existing if a.get("link")}
 
-        merged: NewsFeed = []
-        new_count = 0
-        preserved_count = 0
-        updated_count = 0
+            merged: NewsFeed = []
+            new_count = 0
+            preserved_count = 0
+            updated_count = 0
 
-        for article in articles:
-            url = article.get("link", "")
-            content_hash = _compute_content_hash(article.get("title", ""), article.get("original_content", ""))
-            article["content_hash"] = content_hash
+            for article in articles:
+                url = article.get("link", "")
+                content_hash = _compute_content_hash(article.get("title", ""), article.get("original_content", ""))
+                article["content_hash"] = content_hash
 
-            if url in existing_by_url:
-                existing_article = existing_by_url[url]
-                existing_hash = existing_hashes.get(url, "")
+                if url in existing_by_url:
+                    existing_article = existing_by_url[url]
+                    existing_hash = existing_hashes.get(url, "")
 
-                # Check if existing summary was AI-generated (Groq) vs local NLP
-                ai_engine = existing_article.get("ai_engine", "")
-                is_ai_generated = ai_engine.startswith("Groq") or "Groq" in ai_engine
+                    # Check if existing summary was AI-generated (Groq) vs local NLP
+                    ai_engine = existing_article.get("ai_engine", "")
+                    is_ai_generated = ai_engine.startswith("Groq") or "Groq" in ai_engine
 
-                if existing_hash == content_hash and existing_article.get("summary_status") == "completed" and is_ai_generated:
-                    # Content unchanged and already summarized with AI - preserve it
-                    merged.append(existing_article)
-                    preserved_count += 1
+                    if existing_hash == content_hash and existing_article.get("summary_status") == "completed" and is_ai_generated:
+                        # Content unchanged and already summarized with AI - preserve it
+                        merged.append(existing_article)
+                        preserved_count += 1
+                    else:
+                        # Content changed, not yet summarized, or was local NLP - use new article (may have pending summary)
+                        merged.append(article)
+                        updated_count += 1
                 else:
-                    # Content changed, not yet summarized, or was local NLP - use new article (may have pending summary)
+                    # Brand new article
                     merged.append(article)
-                    updated_count += 1
-            else:
-                # Brand new article
-                merged.append(article)
-                new_count += 1
+                    new_count += 1
 
-        # Sort by published date descending (newest first)
-        merged.sort(key=lambda x: x.get("published", ""), reverse=True)
+            # Sort by parsed published date descending (newest first).
+            # Unparseable dates fall back to "now" via _parse_published_date.
+            merged.sort(key=_parse_published_date, reverse=True)
 
-        self.save(merged)
+            self.save(merged)
 
         logger.info(
             f"Progressive save: {new_count} new, {updated_count} updated, {preserved_count} preserved (AI only)",
@@ -246,19 +274,20 @@ class NewsRepository:
         Returns:
             Number of articles updated
         """
-        with self.transaction() as articles:
-            article_by_url = {a.get("link", ""): a for a in articles if a.get("link")}
-            updated = 0
-            for summary in summaries:
-                url = summary.get("link")
-                if url in article_by_url:
-                    article = article_by_url[url]
-                    article["summary"] = summary.get("summary", article.get("summary", ""))
-                    article["ai_engine"] = summary.get("ai_engine", article.get("ai_engine", ""))
-                    article["ai_model"] = summary.get("ai_model", article.get("ai_model", ""))
-                    article["summary_status"] = summary.get("summary_status", "completed")
-                    article["updated_at"] = summary.get("updated_at", article.get("updated_at", ""))
-                    updated += 1
+        with _repo_lock:
+            with self.transaction() as articles:
+                article_by_url = {a.get("link", ""): a for a in articles if a.get("link")}
+                updated = 0
+                for summary in summaries:
+                    url = summary.get("link")
+                    if url in article_by_url:
+                        article = article_by_url[url]
+                        article["summary"] = summary.get("summary", article.get("summary", ""))
+                        article["ai_engine"] = summary.get("ai_engine", article.get("ai_engine", ""))
+                        article["ai_model"] = summary.get("ai_model", article.get("ai_model", ""))
+                        article["summary_status"] = summary.get("summary_status", "completed")
+                        article["updated_at"] = summary.get("updated_at", article.get("updated_at", ""))
+                        updated += 1
             return updated
 
     def get_pending_articles(self) -> List[Dict]:

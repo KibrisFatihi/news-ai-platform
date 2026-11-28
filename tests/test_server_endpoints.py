@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import os
+import time
 from unittest.mock import patch, MagicMock
 
 # Set a fixed refresh token secret for testing
@@ -147,25 +148,8 @@ class TestRefreshEndpoint:
 
     @patch("main.run_pipeline")
     def test_refresh_endpoint_success(self, mock_pipeline, api_client):
-        """Test successful pipeline refresh."""
-        mock_pipeline.return_value = [
-            {
-                "id": "1",
-                "title": "Refreshed News",
-                "source": "Test",
-                "category": "Genel Gündem",
-                "summary": "Summary",
-                "content": "Content",
-                "original_content": "Content",
-                "link": "https://example.com",
-                "ai_engine": "Yerel NLP",
-                "ai_model": "TextRank",
-                "published": "2026-01-01",
-                "updated_at": "2026-01-01T12:00:00",
-                "related_count": 0,
-                "related_sources": []
-            }
-        ]
+        """Test successful pipeline refresh — returns 202, pipeline runs in background."""
+        mock_pipeline.return_value = []
 
         response = api_client.post(
             "/api/refresh",
@@ -173,15 +157,18 @@ class TestRefreshEndpoint:
             headers={"X-Refresh-Token": TEST_REFRESH_TOKEN}
         )
 
-        assert response["status_code"] == 200
+        assert response["status_code"] == 202
         data = response["json"]
         assert data["success"] is True
-        assert data["count"] == 1
-        assert "articles" in data
+        assert data["status"] == "running"
+
+        # Background thread needs a moment to call run_pipeline
+        time.sleep(0.5)
+        mock_pipeline.assert_called_once_with(api_key=None)
 
     @patch("main.run_pipeline")
     def test_refresh_endpoint_with_api_key_body(self, mock_pipeline, api_client):
-        """Test refresh with API key in request body."""
+        """Test refresh with API key in request body — returns 202, background pipeline."""
         mock_pipeline.return_value = []
 
         response = api_client.post(
@@ -190,12 +177,16 @@ class TestRefreshEndpoint:
             headers={"X-Refresh-Token": TEST_REFRESH_TOKEN}
         )
 
-        assert response["status_code"] == 200
+        assert response["status_code"] == 202
+        data = response["json"]
+        assert data["success"] is True
+
+        time.sleep(0.5)
         mock_pipeline.assert_called_once_with(api_key="gsk_test_key")
 
     @patch("main.run_pipeline")
     def test_refresh_endpoint_with_api_key_header(self, mock_pipeline, api_client):
-        """Test refresh with API key in header."""
+        """Test refresh with API key in header — returns 202, background pipeline."""
         mock_pipeline.return_value = []
 
         response = api_client.post(
@@ -207,12 +198,16 @@ class TestRefreshEndpoint:
             }
         )
 
-        assert response["status_code"] == 200
+        assert response["status_code"] == 202
+        data = response["json"]
+        assert data["success"] is True
+
+        time.sleep(0.5)
         mock_pipeline.assert_called_once_with(api_key="gsk_header_key")
 
     @patch("main.run_pipeline")
     def test_refresh_endpoint_header_priority(self, mock_pipeline, api_client):
-        """Test header takes priority over body."""
+        """Test header takes priority over body — returns 202, background pipeline."""
         mock_pipeline.return_value = []
 
         response = api_client.post(
@@ -224,12 +219,16 @@ class TestRefreshEndpoint:
             }
         )
 
-        assert response["status_code"] == 200
+        assert response["status_code"] == 202
+        data = response["json"]
+        assert data["success"] is True
+
+        time.sleep(0.5)
         mock_pipeline.assert_called_once_with(api_key="gsk_header_key")
 
     @patch("main.run_pipeline")
     def test_refresh_endpoint_case_insensitive_headers(self, mock_pipeline, api_client):
-        """Browsers may send header names in lowercase (x-refresh-token, x-groq-api-key); they must be honored."""
+        """Browsers may send header names in lowercase (x-refresh-token, x-groq-api-key); they must be honored — returns 202."""
         mock_pipeline.return_value = []
 
         response = api_client.post(
@@ -238,12 +237,16 @@ class TestRefreshEndpoint:
             headers={"x-refresh-token": TEST_REFRESH_TOKEN, "x-groq-api-key": "gsk_lower_key"},
         )
 
-        assert response["status_code"] == 200
+        assert response["status_code"] == 202
+        data = response["json"]
+        assert data["success"] is True
+
+        time.sleep(0.5)
         mock_pipeline.assert_called_once_with(api_key="gsk_lower_key")
 
     @patch("main.run_pipeline")
     def test_refresh_endpoint_error(self, mock_pipeline, api_client):
-        """Test refresh endpoint error handling."""
+        """Test refresh endpoint error handling — pipeline runs in background, error logged not returned."""
         # Rate limiter is module-global; reset so this test stays independent of order.
         from backend.middleware import _refresh_rate_limit, _refresh_rate_limit_lock
 
@@ -258,11 +261,15 @@ class TestRefreshEndpoint:
             headers={"X-Refresh-Token": TEST_REFRESH_TOKEN}
         )
 
-        assert response["status_code"] == 500
+        # Pipeline runs in background; HTTP returns 202 immediately.
+        # Background thread catches the exception and logs it.
+        assert response["status_code"] == 202
         data = response["json"]
-        assert data["success"] is False
-        assert "error" in data
-        assert "request_id" in data
+        assert data["success"] is True
+        assert data["status"] == "running"
+
+        # Give background thread a moment to run and fail
+        time.sleep(0.5)
 
     def test_refresh_endpoint_invalid_token(self, api_client):
         """Test refresh with invalid token."""
@@ -294,18 +301,17 @@ class TestRefreshEndpoint:
         with _refresh_rate_limit_lock:
             _refresh_rate_limit.clear()
 
-        # Make 5 requests (max allowed)
-        for i in range(5):
-            with patch("main.run_pipeline") as mock_pipeline:
-                mock_pipeline.return_value = []
-                response = api_client.post(
-                    "/api/refresh",
-                    json_data={},
-                    headers={"X-Refresh-Token": TEST_REFRESH_TOKEN}
-                )
-                assert response["status_code"] == 200
+        # Make 1 request (max allowed: 1 per 10 minutes)
+        with patch("main.run_pipeline") as mock_pipeline:
+            mock_pipeline.return_value = []
+            response = api_client.post(
+                "/api/refresh",
+                json_data={},
+                headers={"X-Refresh-Token": TEST_REFRESH_TOKEN}
+            )
+            assert response["status_code"] == 202
 
-        # 6th request should be rate limited
+        # 2nd request should be rate limited
         with patch("main.run_pipeline") as mock_pipeline:
             mock_pipeline.return_value = []
             response = api_client.post(

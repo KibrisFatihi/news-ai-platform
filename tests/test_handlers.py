@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import time
 import pytest
 
 from backend.handlers import (
@@ -169,7 +170,7 @@ class TestHandlePostRefresh:
     """Tests for handle_post_refresh handler."""
 
     def test_handle_post_refresh_success(self):
-        """Test successful refresh."""
+        """Test successful refresh — pipeline runs in background, returns 202."""
         request_id = generate_request_id()
         headers = {
             "Origin": "https://example.com",
@@ -182,34 +183,18 @@ class TestHandlePostRefresh:
         with patch("backend.middleware.verify_refresh_token", return_value=True), \
              patch("backend.middleware.check_refresh_rate_limit", return_value=(True, 0)), \
              patch("main.run_pipeline") as mock_pipeline, \
-             patch("backend.handlers._refresh_lock", MagicMock()), \
-             patch("backend.handlers.common.cfg") as mock_cfg:
+             patch("backend.handlers._refresh_lock", MagicMock()):
 
-            mock_cfg.server.max_request_size_mb = 10
-            mock_pipeline.return_value = [
-                {
-                    "id": "1",
-                    "title": "Refreshed",
-                    "source": "Test",
-                    "category": "Genel Gündem",
-                    "summary": "Summary",
-                    "content": "Content",
-                    "original_content": "Content",
-                    "link": "https://example.com",
-                    "ai_engine": "Yerel NLP",
-                    "ai_model": "TextRank",
-                    "published": "2026-01-01",
-                    "updated_at": "2026-01-01T12:00:00",
-                    "related_count": 0,
-                    "related_sources": []
-                }
-            ]
+            mock_pipeline.return_value = []
 
             status, resp_headers, resp_body = handle_post_refresh(headers, body, client_ip, request_id)
 
-            assert status == 200
+            assert status == 202
             assert resp_body["success"] is True
-            assert resp_body["count"] == 1
+            assert resp_body["status"] == "running"
+
+            # Background thread needs a moment to start and call run_pipeline
+            time.sleep(0.5)
             mock_pipeline.assert_called_once_with(api_key="gsk_test")
 
     def test_handle_post_refresh_invalid_token(self):
@@ -232,7 +217,6 @@ class TestHandlePostRefresh:
         """Test refresh rate limited."""
         request_id = generate_request_id()
         headers = {
-            "Origin": "https://example.com",
             "X-Refresh-Token": "valid_token"
         }
         body = b"{}"

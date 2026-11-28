@@ -205,19 +205,6 @@ def create_error_response(
     }
 
 
-def create_success_response(
-    data: Any,
-    status_code: int = 200
-) -> Dict[str, Any]:
-    """Create standardized success response."""
-    if isinstance(data, dict) and "success" in data:
-        return data
-    return {
-        "success": True,
-        **data
-    }
-
-
 # --- Logging Helpers ---
 
 def log_api_request(

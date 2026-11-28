@@ -114,6 +114,24 @@ class NewsAPIRequestHandler(http.server.SimpleHTTPRequestHandler):
     def handle_one_request(self):
         super().handle_one_request()
 
+    def _security_headers(self) -> None:
+        """Add security headers to every response."""
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
+        # CSP rapor modu — önce sadece raporla, sonra engellemeye geç
+        self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; img-src 'self' data: https:; connect-src 'self' https://api.groq.com; frame-ancestors 'none';")
+        # HSTS — sadece HTTPS'li Render domaini için
+        self.send_header("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+
+    def _get_client_ip(self) -> str:
+        """Return the real client IP, preferring X-Forwarded-For when behind a proxy (e.g. Render)."""
+        forwarded = self.headers.get("X-Forwarded-For", "")
+        if forwarded:
+            # X-Forwarded-For can contain a chain: client, proxy1, proxy2
+            return forwarded.split(",")[0].strip()
+        return self.client_address[0]
+
     def _send_response(
         self,
         status_code: int,
@@ -139,6 +157,9 @@ class NewsAPIRequestHandler(http.server.SimpleHTTPRequestHandler):
         for key, value in headers.items():
             self.send_header(key, value)
 
+        # Security headers (all responses)
+        self._security_headers()
+
         self.end_headers()
         if response_bytes:
             self.wfile.write(response_bytes)
@@ -151,6 +172,8 @@ class NewsAPIRequestHandler(http.server.SimpleHTTPRequestHandler):
         """
         if not self.path.startswith("/api/"):
             self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+            # Security headers for static file responses
+            self._security_headers()
         super().end_headers()
 
     def do_OPTIONS(self):
@@ -182,7 +205,9 @@ class NewsAPIRequestHandler(http.server.SimpleHTTPRequestHandler):
             # API: Get News
             if path == "/api/news":
                 headers_dict = dict(self.headers)
-                status, headers, body = handle_get_news(headers_dict, request_id)
+                # Global arama parametresi: ?search=kelime
+                search = urllib.parse.parse_qs(parsed_url.query).get("search", [""])[0] or None
+                status, headers, body = handle_get_news(headers_dict, request_id, search=search)
                 self._send_response(status, headers, body)
                 self.log_request_with_timing("GET", path, status, request_start, request_id)
                 return
@@ -229,7 +254,7 @@ class NewsAPIRequestHandler(http.server.SimpleHTTPRequestHandler):
         request_start = time.time()
         parsed_url = urllib.parse.urlparse(self.path)
         path = parsed_url.path
-        client_ip = self.client_address[0]
+        client_ip = self._get_client_ip()
 
         logger.info(f"POST request: path={path}")
 
@@ -281,7 +306,7 @@ def start_server():
     server_address = (server_cfg.host, server_cfg.port)
 
     # Enable address reuse for faster restarts
-    socketserver.TCPServer.allow_reuse_address = False
+    socketserver.TCPServer.allow_reuse_address = True
 
     # NOTE: We intentionally do NOT call socket.setdefaulttimeout() here.
     # A global socket timeout would break the long-lived HTTP connection

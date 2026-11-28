@@ -4,7 +4,7 @@ GET /api/news handler.
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from backend.models import Article, NewsResponse
 from backend.handlers import common as common_h
@@ -13,7 +13,8 @@ from backend import middleware as middleware_h
 
 def handle_get_news(
     request_headers: Dict[str, str],
-    request_id: str
+    request_id: str,
+    search: Optional[str] = None
 ) -> Tuple[int, Dict[str, str], Dict[str, Any]]:
     """
     Handle GET /api/news request.
@@ -24,6 +25,22 @@ def handle_get_news(
 
     # Load cached data
     articles = repo.load_or_fallback() or []
+
+    # Global arama: başlık, özet, içerik ve kaynak alanlarında eşleştirme
+    if search:
+        search_lower = search.strip().lower()
+        if search_lower:
+            filtered = []
+            for a in articles:
+                haystack = " ".join([
+                    str(a.get("title", "") or ""),
+                    str(a.get("summary", "") or ""),
+                    str(a.get("content", "") or a.get("original_content", "") or ""),
+                    str(a.get("source", "") or ""),
+                ]).lower()
+                if search_lower in haystack:
+                    filtered.append(a)
+            articles = filtered
 
     # Check conditional request (304 Not Modified)
     handled, headers, body = common_h._handle_conditional(request_headers, request_id, articles, repo)

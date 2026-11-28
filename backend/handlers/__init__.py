@@ -10,7 +10,6 @@ Exports:
 - handle_options: OPTIONS preflight
 - handle_not_found: 404 handler
 - _refresh_lock: threading.Lock for refresh concurrency control
-- _refresh_in_progress: bool flag for refresh state
 - get_news_repository: repository factory
 - cfg: config instance
 - compute_etag: etag computation
@@ -30,7 +29,6 @@ from backend.handlers.weather import handle_get_weather
 from backend.handlers.refresh import (
     handle_post_refresh,
     _refresh_lock,
-    _refresh_in_progress,
 )
 from backend.handlers.others import handle_options, handle_not_found
 from backend.handlers.common import (
@@ -51,7 +49,6 @@ time = _time
 
 # Re-export for backward compatibility with tests
 _refresh_lock = _refresh_lock
-_refresh_in_progress = _refresh_in_progress
 
 __all__ = [
     "handle_get_news",
@@ -62,7 +59,6 @@ __all__ = [
     "handle_options",
     "handle_not_found",
     "_refresh_lock",
-    "_refresh_in_progress",
     "get_news_repository",
     "cfg",
     "compute_etag",

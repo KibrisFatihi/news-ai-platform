@@ -250,7 +250,6 @@ def reset_refresh_state():
 
     if handlers_module._refresh_lock.locked():
         handlers_module._refresh_lock.release()
-    handlers_module._refresh_in_progress = False
 
     # Restore the test refresh token secret so token-computation tests stay
     # isolated from any test that mutates os.environ["REFRESH_TOKEN_SECRET"]
@@ -264,7 +263,6 @@ def reset_refresh_state():
 
     if handlers_module._refresh_lock.locked():
         handlers_module._refresh_lock.release()
-    handlers_module._refresh_in_progress = False
 
     os.environ["REFRESH_TOKEN_SECRET"] = "test-secret-key-for-testing-only"
 

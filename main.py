@@ -245,8 +245,16 @@ def _run_summarization_phase(
         else:
             logger.info("      -> Parallel Model Rotation")
             with ThreadPoolExecutor(max_workers=min(len(to_summarize), 2)) as executor:
-                futures = [executor.submit(summarizer_instance.summarize, t, c) for t, c in cluster_articles]
-                all_ai_results = [f.result() for f in as_completed(futures)]
+                # Map each future to its original index so results are reassembled
+                # in article order, regardless of completion order (as_completed).
+                future_to_index = {
+                    executor.submit(summarizer_instance.summarize, t, c): idx
+                    for idx, (t, c) in enumerate(cluster_articles)
+                }
+                all_ai_results = [None] * len(cluster_articles)
+                for future in as_completed(future_to_index):
+                    idx = future_to_index[future]
+                    all_ai_results[idx] = future.result()
     else:
         logger.info("      -> Yerel NLP (Sıfır Token)")
         all_ai_results = [summarizer_instance.summarize(t, c) for t, c in cluster_articles]
