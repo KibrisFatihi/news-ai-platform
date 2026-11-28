@@ -176,6 +176,44 @@ class NewsAPIRequestHandler(http.server.SimpleHTTPRequestHandler):
             self._security_headers()
         super().end_headers()
 
+    def do_HEAD(self):
+        """Handle HEAD requests — used by uptime monitors (UptimeRobot, etc.)."""
+        request_id = generate_request_id()
+        request_start = time.time()
+        parsed_url = urllib.parse.urlparse(self.path)
+        path = parsed_url.path
+
+        try:
+            if path == "/api/health":
+                status, headers, _ = handle_get_health(dict(self.headers), request_id)
+                # HEAD responses have no body
+                self.send_response(status)
+                for key, value in headers.items():
+                    self.send_header(key, value)
+                self._security_headers()
+                self.end_headers()
+                self.log_request_with_timing("HEAD", path, status, request_start, request_id)
+                return
+
+            # Other HEAD paths return 404 without body
+            status, headers, _ = handle_not_found(dict(self.headers), request_id)
+            self.send_response(status)
+            for key, value in headers.items():
+                self.send_header(key, value)
+            self._security_headers()
+            self.end_headers()
+            self.log_request_with_timing("HEAD", path, status, request_start, request_id)
+
+        except Exception as e:
+            logger.error(
+                f"HEAD {path} error [{request_id}]: {e}",
+                extra={"extra_fields": {"event": "api_error", "method": "HEAD", "path": path, "error": str(e), "request_id": request_id}}
+            )
+            self.send_response(500)
+            self._security_headers()
+            self.end_headers()
+            self.log_request_with_timing("HEAD", path, 500, request_start, request_id)
+
     def do_OPTIONS(self):
         """Handle CORS pre-flight requests."""
         request_id = generate_request_id()
